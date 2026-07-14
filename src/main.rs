@@ -30,6 +30,14 @@ fn main() {
         std::process::exit(exit_code);
     }
 
+    // Debug-only: render the widget offscreen to BMP files for visual review.
+    #[cfg(debug_assertions)]
+    if let Some(pos) = args.iter().position(|a| a == "--render-preview") {
+        let out_dir = args.get(pos + 1).map(String::as_str).unwrap_or(".");
+        window::render_previews(out_dir);
+        return;
+    }
+
     if diagnose_enabled {
         diagnose::log("entering window::run");
     }

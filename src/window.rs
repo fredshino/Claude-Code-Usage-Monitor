@@ -59,8 +59,6 @@ struct AppState {
     session_text: String,
     weekly_percent: f64,
     weekly_text: String,
-    codex_session_percent: f64,
-    codex_session_text: String,
     codex_weekly_percent: f64,
     codex_weekly_text: String,
     antigravity_session_percent: f64,
@@ -434,11 +432,10 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             if s.show_codex {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Codex,
-                    percent: Some(s.codex_session_percent),
+                    percent: Some(s.codex_weekly_percent),
                     tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
+                        "{} 7d: {}",
                         s.language.strings().codex_model,
-                        s.codex_session_text,
                         s.codex_weekly_text
                     ),
                 });
@@ -675,10 +672,9 @@ fn refresh_usage_texts(state: &mut AppState) {
     }
 
     if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text = poller::format_line(&codex.session, strings);
+        // Codex is weekly-only now; its single meter lives in `weekly`.
         state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
     } else if state.show_codex {
-        state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
     }
 
@@ -1078,6 +1074,9 @@ const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
 const TEXT_WIDTH: i32 = 62;
+/// Wider value text for the stacked extras column, which carries the meter's
+/// name inline (e.g. "Codex 23% · 5d" / "Fable 2% · 3d").
+const EXTRA_TEXT_WIDTH: i32 = 104;
 const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
@@ -1101,67 +1100,97 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
-fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity: bool) -> i32 {
-    (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
+/// Providers rendered as full two-row (5h + 7d) columns: Claude and Antigravity.
+/// Codex is no longer a provider column — it is now a weekly-only meter drawn in
+/// the shared extras column alongside Fable.
+fn provider_count(show_claude_code: bool, show_antigravity: bool) -> i32 {
+    show_claude_code as i32 + show_antigravity as i32
 }
 
-fn row_bar_segment_count(active_models: i32) -> i32 {
-    match active_models {
+/// The stacked extras column holds the weekly-only meters (Codex on the session
+/// row, Fable on the weekly row). It is present when either meter is active.
+fn extras_active_for(show_codex: bool, fable_active: bool) -> bool {
+    show_codex || fable_active
+}
+
+/// Fable is a Claude Code sub-meter, so it only shows when the account exposes a
+/// Fable limit, the toggle is on, and Claude Code itself is enabled.
+fn state_fable_active(state: &AppState) -> bool {
+    state.fable_active && state.show_claude_code && state.show_fable
+}
+
+fn state_extras_active(state: &AppState) -> bool {
+    extras_active_for(state.show_codex, state_fable_active(state))
+}
+
+/// Total drawn columns: full providers plus the single stacked extras column.
+fn widget_column_count(providers: i32, extras: bool) -> i32 {
+    (providers + extras as i32).max(1)
+}
+
+fn row_bar_segment_count(columns: i32) -> i32 {
+    match columns {
         1 => SEGMENT_COUNT,
         2 => 5,
         _ => 4,
     }
 }
 
-fn total_widget_width_for(active_models: i32, fable_active: bool) -> i32 {
-    let bar_segments = row_bar_segment_count(active_models);
-    let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
-        + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH);
+fn segments_width(segment_count: i32) -> i32 {
+    (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
+}
 
-    // The Fable meter adds one extra bar to the weekly row only; reserve room
-    // for it so the widget is wide enough for its widest row.
-    let fable_extra = if fable_active {
-        model_width + sc(MODEL_RIGHT_MARGIN)
-    } else {
-        0
-    };
+/// Width of a provider cell: bar + gap + its "X% · Yh" value text.
+fn provider_cell_width(segment_count: i32) -> i32 {
+    segments_width(segment_count) + sc(BAR_RIGHT_MARGIN) + sc(TEXT_WIDTH)
+}
+
+/// Width of the stacked extras cell: bar + gap + wider text that carries the
+/// meter's inline name.
+fn extras_cell_width(segment_count: i32) -> i32 {
+    segments_width(segment_count) + sc(BAR_RIGHT_MARGIN) + sc(EXTRA_TEXT_WIDTH)
+}
+
+fn total_widget_width_for(providers: i32, extras: bool) -> i32 {
+    let columns = widget_column_count(providers, extras);
+    let segment_count = row_bar_segment_count(columns);
+    let cells = provider_cell_width(segment_count) * providers
+        + if extras {
+            extras_cell_width(segment_count)
+        } else {
+            0
+        };
 
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
         + sc(LABEL_WIDTH)
         + sc(LABEL_RIGHT_MARGIN)
-        + model_width * active_models
-        + sc(MODEL_RIGHT_MARGIN) * (active_models - 1)
-        + fable_extra
+        + cells
+        + sc(MODEL_RIGHT_MARGIN) * (columns - 1)
         + sc(RIGHT_MARGIN)
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
     total_widget_width_for(
-        active_model_count(
-            state.show_claude_code,
-            state.show_codex,
-            state.show_antigravity,
-        ),
-        state.fable_active && state.show_claude_code && state.show_fable,
+        provider_count(state.show_claude_code, state.show_antigravity),
+        state_extras_active(state),
     )
 }
 
 fn total_widget_width() -> i32 {
-    let (active_models, fable_active) = {
+    let (providers, extras) = {
         let state = lock_state();
         state
             .as_ref()
             .map(|s| {
                 (
-                    active_model_count(s.show_claude_code, s.show_codex, s.show_antigravity),
-                    s.fable_active && s.show_claude_code && s.show_fable,
+                    provider_count(s.show_claude_code, s.show_antigravity),
+                    state_extras_active(s),
                 )
             })
             .unwrap_or((1, false))
     };
-    total_widget_width_for(active_models, fable_active)
+    total_widget_width_for(providers, extras)
 }
 
 fn claude_accent_color() -> Color {
@@ -1294,11 +1323,11 @@ pub fn run() {
 
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
-        let initial_model_count = active_model_count(
-            settings.show_claude_code,
-            settings.show_codex,
-            settings.show_antigravity,
-        );
+        // Fable state is unknown until the first poll; reserve the extras column
+        // only for Codex at startup. The width re-adjusts once data arrives.
+        let initial_providers =
+            provider_count(settings.show_claude_code, settings.show_antigravity);
+        let initial_extras = extras_active_for(settings.show_codex, false);
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             PCWSTR::from_raw(class_name.as_ptr()),
@@ -1306,7 +1335,7 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width_for(initial_model_count, false),
+            total_widget_width_for(initial_providers, initial_extras),
             sc(WIDGET_HEIGHT),
             HWND::default(),
             HMENU::default(),
@@ -1353,8 +1382,6 @@ pub fn run() {
                 session_text: "--".to_string(),
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
-                codex_session_percent: 0.0,
-                codex_session_text: "--".to_string(),
                 codex_weekly_percent: 0.0,
                 codex_weekly_text: "--".to_string(),
                 antigravity_session_percent: 0.0,
@@ -1482,8 +1509,6 @@ fn render_layered() {
         session_text,
         weekly_pct,
         weekly_text,
-        codex_session_pct,
-        codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
         antigravity_session_pct,
@@ -1508,8 +1533,6 @@ fn render_layered() {
                 s.session_text.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
-                s.codex_session_percent,
-                s.codex_session_text.clone(),
                 s.codex_weekly_percent,
                 s.codex_weekly_text.clone(),
                 s.antigravity_session_percent,
@@ -1518,7 +1541,7 @@ fn render_layered() {
                 s.antigravity_weekly_text.clone(),
                 s.fable_percent,
                 s.fable_text.clone(),
-                s.fable_active && s.show_fable,
+                state_fable_active(s),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
@@ -1607,8 +1630,6 @@ fn render_layered() {
             &session_text,
             weekly_pct,
             &weekly_text,
-            codex_session_pct,
-            &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
             antigravity_session_pct,
@@ -1687,8 +1708,6 @@ fn paint_content(
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
-    codex_session_pct: f64,
-    codex_session_text: &str,
     codex_weekly_pct: f64,
     codex_weekly_text: &str,
     antigravity_session_pct: f64,
@@ -1780,14 +1799,44 @@ fn paint_content(
         );
         let old_font = SelectObject(hdc, font);
 
-        // The Fable meter's bar lives in the weekly row; the session row shows a
-        // "Fable" heading above it so the extra bar is clearly labelled.
-        let fable_bar = if fable_active {
-            Some((fable_pct, fable_text, fable_accent))
+        // Codex and Fable are weekly-only meters stacked into one appended
+        // column: Codex on the session (top) row, Fable on the weekly (bottom)
+        // row. Each carries its name inline so the column needs no heading.
+        let extras_present = extras_active_for(show_codex, fable_active);
+
+        // The "5h"/"7d" row labels describe the provider columns. With no full
+        // provider shown (Codex-only), they would mislabel the weekly-only
+        // meters, so drop them — Codex/Fable already carry their own names.
+        let providers = provider_count(show_claude_code, show_antigravity);
+        let (row1_label, row2_label) = if providers == 0 {
+            ("", "")
+        } else {
+            (strings.session_window, strings.weekly_window)
+        };
+
+        let codex_row_text = format!("Codex {codex_weekly_text}");
+        let codex_extra = if show_codex {
+            Some(RowExtra {
+                percent: codex_weekly_pct,
+                text: &codex_row_text,
+                accent: codex_accent,
+                value_color: codex_usage_text_color(is_dark),
+            })
         } else {
             None
         };
-        let fable_label = if fable_active { Some("Fable") } else { None };
+
+        let fable_row_text = format!("Fable {fable_text}");
+        let fable_extra = if fable_active {
+            Some(RowExtra {
+                percent: fable_pct,
+                text: &fable_row_text,
+                accent: fable_accent,
+                value_color: fable_usage_text_color(is_dark),
+            })
+        } else {
+            None
+        };
 
         draw_row(
             hdc,
@@ -1795,23 +1844,18 @@ fn paint_content(
             row1_y,
             is_dark,
             text_color,
-            strings.session_window,
+            row1_label,
             session_pct,
             session_text,
-            codex_session_pct,
-            codex_session_text,
             antigravity_session_pct,
             antigravity_session_text,
             show_claude_code,
-            show_codex,
             show_antigravity,
+            extras_present,
             accent,
-            codex_accent,
             antigravity_accent,
             track,
-            // Session row has no Fable bar, only the heading label.
-            None,
-            fable_label,
+            codex_extra,
         );
         draw_row(
             hdc,
@@ -1819,23 +1863,18 @@ fn paint_content(
             row2_y,
             is_dark,
             text_color,
-            strings.weekly_window,
+            row2_label,
             weekly_pct,
             weekly_text,
-            codex_weekly_pct,
-            codex_weekly_text,
             antigravity_weekly_pct,
             antigravity_weekly_text,
             show_claude_code,
-            show_codex,
             show_antigravity,
+            extras_present,
             accent,
-            codex_accent,
             antigravity_accent,
             track,
-            fable_bar,
-            // Weekly row draws the Fable bar itself, no separate heading.
-            None,
+            fable_extra,
         );
 
         SelectObject(hdc, old_font);
@@ -1863,7 +1902,11 @@ fn do_poll(send_hwnd: SendHwnd) {
                     if let Some(fable) = claude_code.fable.as_ref() {
                         s.fable_percent = fable.percentage;
                         s.fable_active = true;
-                    } else {
+                    } else if claude_code.fable_authoritative {
+                        // Only the usage endpoint can see Fable-scoped limits;
+                        // a poll served by the Messages API fallback must not
+                        // hide the meter, or it flickers on transient endpoint
+                        // failures.
                         s.fable_active = false;
                     }
                 } else if s.show_claude_code {
@@ -1872,10 +1915,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                     s.fable_active = false;
                 }
                 if let Some(codex) = data.codex.as_ref() {
-                    s.codex_session_percent = codex.session.percentage;
                     s.codex_weekly_percent = codex.weekly.percentage;
                 } else if s.show_codex {
-                    s.codex_session_percent = 0.0;
                     s.codex_weekly_percent = 0.0;
                 }
                 if let Some(antigravity) = data.antigravity.as_ref() {
@@ -1952,7 +1993,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot = watch_snapshot;
                             s.session_text = "!".to_string();
                             s.weekly_text = "!".to_string();
-                            s.codex_session_text = "!".to_string();
                             s.codex_weekly_text = "!".to_string();
                             s.antigravity_session_text = "!".to_string();
                             s.antigravity_weekly_text = "!".to_string();
@@ -1972,7 +2012,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot.clear();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
@@ -2605,7 +2644,6 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
                         }
@@ -2722,7 +2760,6 @@ unsafe extern "system" fn wnd_proc(
                             }
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
@@ -3100,8 +3137,6 @@ fn paint(hdc: HDC, hwnd: HWND) {
         session_text,
         weekly_pct,
         weekly_text,
-        codex_session_pct,
-        codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
         antigravity_session_pct,
@@ -3124,8 +3159,6 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.session_text.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
-                s.codex_session_percent,
-                s.codex_session_text.clone(),
                 s.codex_weekly_percent,
                 s.codex_weekly_text.clone(),
                 s.antigravity_session_percent,
@@ -3134,7 +3167,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_weekly_text.clone(),
                 s.fable_percent,
                 s.fable_text.clone(),
-                s.fable_active && s.show_fable,
+                state_fable_active(s),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
@@ -3191,8 +3224,6 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &session_text,
             weekly_pct,
             &weekly_text,
-            codex_session_pct,
-            &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
             antigravity_session_pct,
@@ -3218,6 +3249,15 @@ fn paint(hdc: HDC, hwnd: HWND) {
     }
 }
 
+/// A weekly-only meter drawn in the stacked extras column. `text` already
+/// carries the meter's inline name (e.g. "Codex 23% · 5d").
+struct RowExtra<'a> {
+    percent: f64,
+    text: &'a str,
+    accent: &'a Color,
+    value_color: Color,
+}
+
 fn draw_row(
     hdc: HDC,
     x: i32,
@@ -3227,31 +3267,23 @@ fn draw_row(
     label: &str,
     claude_percent: f64,
     claude_text: &str,
-    codex_percent: f64,
-    codex_text: &str,
     antigravity_percent: f64,
     antigravity_text: &str,
     show_claude_code: bool,
-    show_codex: bool,
     show_antigravity: bool,
+    extras_present: bool,
     claude_accent: &Color,
-    codex_accent: &Color,
     antigravity_accent: &Color,
     track: &Color,
-    fable: Option<(f64, &str, &Color)>,
-    fable_label: Option<&str>,
+    extra: Option<RowExtra>,
 ) {
     let seg_h = sc(SEGMENT_H);
-    let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
-    let segment_count = row_bar_segment_count(active_models);
-    let use_model_text_colors = active_models > 1;
+    let providers = provider_count(show_claude_code, show_antigravity);
+    let columns = widget_column_count(providers, extras_present);
+    let segment_count = row_bar_segment_count(columns);
+    let use_model_text_colors = columns > 1;
     let claude_value_color = if use_model_text_colors {
         claude_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let codex_value_color = if use_model_text_colors {
-        codex_usage_text_color(is_dark)
     } else {
         *text_color
     };
@@ -3260,25 +3292,24 @@ fn draw_row(
     } else {
         *text_color
     };
-    // The Fable value is always tinted so it is distinguishable from the
-    // adjacent weekly-all bar even when Claude Code is the only provider.
-    let fable_value_color = fable_usage_text_color(is_dark);
 
     unsafe {
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
-        let mut label_wide: Vec<u16> = label.encode_utf16().collect();
-        let mut label_rect = RECT {
-            left: x,
-            top: y,
-            right: x + sc(LABEL_WIDTH),
-            bottom: y + seg_h,
-        };
-        let _ = DrawTextW(
-            hdc,
-            &mut label_wide,
-            &mut label_rect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        );
+        if !label.is_empty() {
+            let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+            let mut label_wide: Vec<u16> = label.encode_utf16().collect();
+            let mut label_rect = RECT {
+                left: x,
+                top: y,
+                right: x + sc(LABEL_WIDTH),
+                bottom: y + seg_h,
+            };
+            let _ = DrawTextW(
+                hdc,
+                &mut label_wide,
+                &mut label_rect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
 
         let mut model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
         if show_claude_code {
@@ -3292,22 +3323,9 @@ fn draw_row(
                 claude_accent,
                 track,
                 &claude_value_color,
+                sc(TEXT_WIDTH),
             );
-            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
-        }
-        if show_codex {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                codex_percent,
-                codex_text,
-                codex_accent,
-                track,
-                &codex_value_color,
-            );
-            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+            model_x += provider_cell_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
         }
         if show_antigravity {
             draw_usage_bar(
@@ -3320,51 +3338,28 @@ fn draw_row(
                 antigravity_accent,
                 track,
                 &antigravity_value_color,
+                sc(TEXT_WIDTH),
             );
-            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+            model_x += provider_cell_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
         }
-        // The Fable weekly meter is appended after all provider columns so the
-        // shared session/weekly columns stay aligned across both rows.
-        if show_claude_code {
-            if let Some((fable_percent, fable_text, fable_accent)) = fable {
-                draw_usage_bar(
-                    hdc,
-                    model_x,
-                    y,
-                    segment_count,
-                    fable_percent,
-                    fable_text,
-                    fable_accent,
-                    track,
-                    &fable_value_color,
-                );
-            }
-            // Heading above the Fable bar (drawn in the session row), tinted to
-            // match the bar so it is clearly the Fable column.
-            if let Some(label) = fable_label {
-                let _ = SetTextColor(hdc, COLORREF(fable_value_color.to_colorref()));
-                let mut label_wide: Vec<u16> = label.encode_utf16().collect();
-                let mut label_rect = RECT {
-                    left: model_x,
-                    top: y,
-                    right: model_x + model_usage_width(segment_count),
-                    bottom: y + seg_h,
-                };
-                let _ = DrawTextW(
-                    hdc,
-                    &mut label_wide,
-                    &mut label_rect,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-                );
-            }
+        // The stacked extras meter (Codex on the session row, Fable on the
+        // weekly row) is appended after the provider columns at the same x on
+        // both rows, so the two meters line up in one column.
+        if let Some(extra) = extra {
+            draw_usage_bar(
+                hdc,
+                model_x,
+                y,
+                segment_count,
+                extra.percent,
+                extra.text,
+                extra.accent,
+                track,
+                &extra.value_color,
+                sc(EXTRA_TEXT_WIDTH),
+            );
         }
     }
-}
-
-fn model_usage_width(segment_count: i32) -> i32 {
-    (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
-        + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH)
 }
 
 fn draw_usage_bar(
@@ -3377,6 +3372,7 @@ fn draw_usage_bar(
     accent: &Color,
     track: &Color,
     text_color: &Color,
+    text_width: i32,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -3437,7 +3433,7 @@ fn draw_usage_bar(
         let mut text_rect = RECT {
             left: text_x,
             top: y,
-            right: text_x + sc(TEXT_WIDTH),
+            right: text_x + text_width,
             bottom: y + seg_h,
         };
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -3465,4 +3461,170 @@ fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
         let _ = DeleteObject(rgn);
         let _ = DeleteObject(brush);
     }
+}
+
+/// Debug-only: render representative widget states offscreen to 24-bit BMP files
+/// so the taskbar layout can be reviewed without embedding in the real taskbar.
+/// Invoked via `--render-preview <dir>`; never called at runtime.
+#[cfg(debug_assertions)]
+pub fn render_previews(dir: &str) {
+    // (name, is_dark, show_claude, show_codex, show_antigravity, fable_active)
+    let scenarios: &[(&str, bool, bool, bool, bool, bool)] = &[
+        ("light_claude_codex_fable", false, true, true, false, true),
+        ("dark_claude_codex_fable", true, true, true, false, true),
+        ("light_claude_codex", false, true, true, false, false),
+        ("light_claude_fable", false, true, false, false, true),
+        ("light_codex_only", false, false, true, false, false),
+        ("light_all", false, true, true, true, true),
+    ];
+    for (name, is_dark, claude, codex, antigravity, fable) in scenarios {
+        let path = format!("{dir}/preview_{name}.bmp");
+        render_preview_bmp(&path, *is_dark, *claude, *codex, *antigravity, *fable);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn render_preview_bmp(
+    path: &str,
+    is_dark: bool,
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    fable_active: bool,
+) {
+    let providers = provider_count(show_claude_code, show_antigravity);
+    let extras = extras_active_for(show_codex, fable_active);
+    let width = total_widget_width_for(providers, extras);
+    let height = sc(WIDGET_HEIGHT);
+
+    let accent = claude_accent_color();
+    let codex_accent = codex_accent_color(is_dark);
+    let antigravity_accent = antigravity_accent_color();
+    let fable_accent = fable_accent_color();
+    let track = if is_dark {
+        Color::from_hex("#444444")
+    } else {
+        Color::from_hex("#AAAAAA")
+    };
+    let text_color = if is_dark {
+        Color::from_hex("#888888")
+    } else {
+        Color::from_hex("#404040")
+    };
+    let bg_color = if is_dark {
+        Color::from_hex("#1C1C1C")
+    } else {
+        Color::from_hex("#F3F3F3")
+    };
+    let strings = LanguageId::English.strings();
+
+    unsafe {
+        let screen_dc = GetDC(HWND::default());
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        let dib =
+            CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
+        if dib.is_invalid() || bits.is_null() {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(HWND::default(), screen_dc);
+            return;
+        }
+        let old_bmp = SelectObject(mem_dc, dib);
+
+        paint_content(
+            mem_dc,
+            width,
+            height,
+            is_dark,
+            &bg_color,
+            &text_color,
+            &accent,
+            &track,
+            strings,
+            12.0,
+            "12% \u{00b7} 3h",
+            4.0,
+            "4% \u{00b7} 5d",
+            23.0,
+            "23% \u{00b7} 5d",
+            35.0,
+            "35% \u{00b7} 2h",
+            18.0,
+            "18% \u{00b7} 6d",
+            2.0,
+            "2% \u{00b7} 3d",
+            fable_active,
+            show_claude_code,
+            show_codex,
+            show_antigravity,
+            &codex_accent,
+            &antigravity_accent,
+            &fable_accent,
+        );
+
+        let pixel_count = (width * height) as usize;
+        let src = std::slice::from_raw_parts(bits as *const u32, pixel_count);
+        let bmp = encode_bmp24(src, width, height);
+        let _ = std::fs::write(path, bmp);
+
+        SelectObject(mem_dc, old_bmp);
+        let _ = DeleteObject(dib);
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(HWND::default(), screen_dc);
+    }
+}
+
+/// Encode a top-down BGRA pixel buffer as a bottom-up 24-bit BMP.
+#[cfg(debug_assertions)]
+fn encode_bmp24(src: &[u32], width: i32, height: i32) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    let row_size = (w * 3).div_ceil(4) * 4;
+    let pixel_data_size = row_size * h;
+    let file_size = 54 + pixel_data_size;
+
+    let mut out = Vec::with_capacity(file_size);
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&(file_size as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&54u32.to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes()); // positive: bottom-up
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&24u16.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&(pixel_data_size as u32).to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    for y in (0..h).rev() {
+        let mut count = 0;
+        for x in 0..w {
+            let px = src[y * w + x];
+            out.push((px & 0xFF) as u8); // B
+            out.push(((px >> 8) & 0xFF) as u8); // G
+            out.push(((px >> 16) & 0xFF) as u8); // R
+            count += 3;
+        }
+        while count < row_size {
+            out.push(0);
+            count += 1;
+        }
+    }
+    out
 }

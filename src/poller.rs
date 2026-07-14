@@ -102,6 +102,11 @@ struct CodexRateLimitDetails {
 struct CodexRateLimitWindow {
     used_percent: f64,
     reset_at: i64,
+    /// Rolling window length in seconds. The Codex API now makes the window
+    /// duration server-driven (5h = 18000, weekly = 604800, monthly, etc.)
+    /// rather than fixing "primary = 5h", so we classify windows by this.
+    #[serde(default)]
+    limit_window_seconds: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -741,6 +746,7 @@ fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
     }
 
     data.fable = extract_fable_section(response.limits.as_deref());
+    data.fable_authoritative = true;
 
     Ok(Some(data))
 }
@@ -878,19 +884,31 @@ fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<UsageData,
     codex_usage_from_response(response).ok_or(PollError::RequestFailed)
 }
 
+/// Codex is now a single weekly-scoped limit: the account's meaningful window
+/// is exposed via `rate_limit` (as of mid-2026 ChatGPT dropped the 5-hour
+/// primary window for the CLI, leaving one weekly window that can arrive in
+/// either `primary_window` or `secondary_window`). We pick the longest window
+/// available — the weekly one — and surface it as `weekly`, leaving `session`
+/// empty so the widget renders Codex as a single weekly meter.
 fn codex_usage_from_response(response: CodexUsageResponse) -> Option<UsageData> {
     let details = *response.rate_limit.flatten()?;
-    let mut data = UsageData::default();
 
+    let mut windows = Vec::new();
     if let Some(window) = details.primary_window.flatten() {
-        data.session = codex_section_from_window(&window);
+        windows.push(*window);
     }
-
     if let Some(window) = details.secondary_window.flatten() {
-        data.weekly = codex_section_from_window(&window);
+        windows.push(*window);
     }
 
-    Some(data)
+    let window = windows
+        .into_iter()
+        .max_by_key(|window| window.limit_window_seconds.unwrap_or(0))?;
+
+    Some(UsageData {
+        weekly: codex_section_from_window(&window),
+        ..UsageData::default()
+    })
 }
 
 fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
@@ -955,6 +973,7 @@ fn fetch_antigravity_usage_from_endpoint(
         session,
         weekly,
         fable: None,
+        fable_authoritative: false,
     })
 }
 
@@ -1658,6 +1677,7 @@ mod tests {
             },
             weekly: UsageSection::default(),
             fable: None,
+            fable_authoritative: false,
         }
     }
 
@@ -1771,6 +1791,77 @@ mod tests {
 
         assert!(extract_fable_section(response.limits.as_deref()).is_none());
         assert!(extract_fable_section(None).is_none());
+    }
+
+    #[test]
+    fn codex_uses_weekly_window_from_primary() {
+        // Real prolite response shape: one weekly window in primary_window,
+        // secondary_window null, used_percent an integer.
+        let response: CodexUsageResponse = serde_json::from_str(
+            r#"{
+                "rate_limit": {
+                    "allowed": true,
+                    "limit_reached": false,
+                    "primary_window": {
+                        "used_percent": 23,
+                        "limit_window_seconds": 604800,
+                        "reset_after_seconds": 494128,
+                        "reset_at": 1784489977
+                    },
+                    "secondary_window": null
+                }
+            }"#,
+        )
+        .expect("codex usage response should deserialize");
+
+        let data = codex_usage_from_response(response).expect("weekly window should be present");
+        assert_eq!(data.weekly.percentage, 23.0);
+        assert_eq!(
+            data.weekly.resets_at,
+            unix_to_system_time(Some(1784489977))
+        );
+        // Session stays empty — Codex is weekly-only now.
+        assert_eq!(data.session.percentage, 0.0);
+        assert!(data.session.resets_at.is_none());
+    }
+
+    #[test]
+    fn codex_prefers_weekly_when_both_windows_present() {
+        // Legacy-style account still exposing a 5h + weekly pair: pick weekly.
+        let response: CodexUsageResponse = serde_json::from_str(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 80,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1784000000
+                    },
+                    "secondary_window": {
+                        "used_percent": 30,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1784489977
+                    }
+                }
+            }"#,
+        )
+        .expect("codex usage response should deserialize");
+
+        let data = codex_usage_from_response(response).expect("a window should be present");
+        assert_eq!(data.weekly.percentage, 30.0);
+        assert_eq!(
+            data.weekly.resets_at,
+            unix_to_system_time(Some(1784489977))
+        );
+    }
+
+    #[test]
+    fn codex_none_when_no_windows() {
+        let response: CodexUsageResponse = serde_json::from_str(
+            r#"{ "rate_limit": { "primary_window": null, "secondary_window": null } }"#,
+        )
+        .expect("codex usage response should deserialize");
+
+        assert!(codex_usage_from_response(response).is_none());
     }
 
     #[test]
