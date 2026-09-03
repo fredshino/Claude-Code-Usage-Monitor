@@ -1512,6 +1512,18 @@ impl DataContext {
             &format!("{name}.monthly.available"),
             monthly.is_some() as u8 as f64,
         );
+        // Fable is a model-scoped slice of the Claude weekly allowance. Only
+        // accounts with Fable access report it, so `fable.available` is what a
+        // theme should gate its meter on.
+        let fable = usage.and_then(|usage| usage.fable.as_ref());
+        let fable_percentage = fable.map(|fable| fable.percentage).unwrap_or(0.0);
+        self.insert_string(&format!("{name}.fable.label"), "Fable");
+        self.insert(&format!("{name}.fable.percentage"), fable_percentage);
+        self.insert(&format!("{name}.fable.remaining"), 100.0 - fable_percentage);
+        self.insert(
+            &format!("{name}.fable.available"),
+            fable.is_some() as u8 as f64,
+        );
         self.insert(&format!("{name}.available"), usage.is_some() as u8 as f64);
         // Carried over from an earlier poll: real figures, not current ones.
         self.insert(
@@ -1550,7 +1562,7 @@ impl DataContext {
         // leaves it reporting 0% while another allowance is spent.
         let headline = match credits {
             Some(credits) => credits.percentage,
-            None => five_hour.max(weekly),
+            None => five_hour.max(weekly).max(fable_percentage),
         };
         self.insert(&format!("{name}.headline.percentage"), headline);
         self.insert(&format!("{name}.headline.remaining"), 100.0 - headline);
@@ -1596,11 +1608,13 @@ impl DataContext {
         }
         let (monthly_unix, monthly_seconds) =
             reset_value(monthly.and_then(|value| value.resets_at));
+        let (fable_unix, fable_seconds) = reset_value(fable.and_then(|value| value.resets_at));
         for (window, unix, seconds) in [
             ("session", session_unix, session_seconds),
             ("five_hour", five_hour_unix, five_hour_seconds),
             ("weekly", weekly_unix, weekly_seconds),
             ("monthly", monthly_unix, monthly_seconds),
+            ("fable", fable_unix, fable_seconds),
         ] {
             self.insert(&format!("{name}.{window}.reset.unix"), unix);
             self.insert(&format!("{name}.{window}.reset.seconds"), seconds);

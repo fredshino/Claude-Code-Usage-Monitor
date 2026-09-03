@@ -2513,7 +2513,14 @@ fn schedule_countdown_timer() {
 
     let min_delay = s.data.as_ref().and_then(|data| {
         data.all_usage()
-            .flat_map(|usage| [&usage.session, &usage.weekly])
+            .flat_map(|usage| {
+                [
+                    Some(&usage.session),
+                    Some(&usage.weekly),
+                    usage.fable.as_ref(),
+                ]
+            })
+            .flatten()
             .filter_map(|section| poller::time_until_display_change(section.resets_at))
             .min()
     });
