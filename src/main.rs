@@ -2,6 +2,7 @@
 
 mod accounts;
 mod app_settings;
+mod codex_multi_auth;
 mod context_menu;
 mod dashboard;
 mod desktop_compositor;
