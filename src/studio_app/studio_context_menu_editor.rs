@@ -93,6 +93,7 @@ pub(super) fn flatten_context_menu_items(
                 ContextMenuItemKind::Text => "text",
                 ContextMenuItemKind::Separator => "separator",
                 ContextMenuItemKind::Submenu { .. } => "submenu",
+                ContextMenuItemKind::Accounts { .. } => "accounts",
             };
             rows.push((path.clone(), depth, item.label.clone(), kind));
             if let ContextMenuItemKind::Submenu { items } = &item.kind {
@@ -335,6 +336,11 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
             format!("layer_actions({})", string_arg(actions))
         }
         ContextMenuAction::OpenUrl { url } => format!("open_url({})", string_arg(url)),
+        ContextMenuAction::SelectAccount { provider, account } => format!(
+            "select_account({}, {})",
+            provider.descriptor().key,
+            string_arg(account)
+        ),
         ContextMenuAction::Exit => "exit()".into(),
     }
 }
@@ -420,6 +426,25 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
             return Err("URL must start with http:// or https://".into());
         }
         return Ok(ContextMenuAction::OpenUrl { url });
+    }
+    if let Some(value) = call_arg("select_account") {
+        let (provider, account) = value
+            .split_once(',')
+            .ok_or_else(|| "Expected select_account(provider, account)".to_string())?;
+        let key = provider.trim().trim_matches('"').to_ascii_lowercase();
+        let provider = ContextMenuProvider::from_key(&key)
+            .ok_or_else(|| format!("Unknown provider: {key}"))?;
+        let account = account.trim();
+        let account: String = if account.starts_with('"') {
+            serde_json::from_str(account)
+                .map_err(|_| "select_account needs a valid quoted account id".to_string())?
+        } else {
+            account.to_string()
+        };
+        if account.is_empty() {
+            return Err("select_account needs an account id, or * to follow the Codex CLI".into());
+        }
+        return Ok(ContextMenuAction::SelectAccount { provider, account });
     }
     Err("Choose an action from the helper, or enter a supported action".into())
 }

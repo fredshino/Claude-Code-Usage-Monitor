@@ -789,6 +789,7 @@ fn save_state_settings() {
             .map(|path| path.to_string_lossy().to_string());
         persisted.placement_override = s.placement_override.clone();
         persisted.floating_card_opacity = s.floating_card_opacity;
+        persisted.accounts = s.accounts.clone();
         // The dashboard process owns its dimensions, so leave the freshly
         // loaded values unchanged when monitor actions persist settings.
         if let Err(error) = save_settings(&persisted) {
@@ -2270,6 +2271,24 @@ fn poll_worker(send_hwnd: SendHwnd) {
 
 fn do_poll_once(hwnd: HWND) {
     let poll_started = Instant::now();
+    // codex-multi-auth can add, remove or switch accounts at any time.
+    let pool = crate::codex_multi_auth::load_store();
+    let pool_changed = {
+        let mut state = lock_state();
+        state.as_mut().is_some_and(|state| {
+            let changed =
+                crate::codex_multi_auth::sync_profiles(&mut state.accounts.codex, pool.as_ref());
+            if changed {
+                if let Some(data) = state.data.as_mut() {
+                    data.select_accounts(&state.accounts);
+                }
+            }
+            changed
+        })
+    };
+    if pool_changed {
+        save_state_settings();
+    }
     let (enabled_providers, accounts, previous, force) = {
         let mut state = lock_state();
         state

@@ -47,6 +47,11 @@ pub enum ContextMenuItemKind {
     Submenu {
         items: Vec<ContextMenuItem>,
     },
+    /// Expands into one row per monitored account of a provider when the
+    /// menu opens. Hidden while there is nothing to choose between.
+    Accounts {
+        provider: ContextMenuProvider,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +88,12 @@ pub enum ContextMenuAction {
     OpenUrl {
         url: String,
     },
+    /// Show one named account in the widget. `*` follows the account the
+    /// codex-multi-auth wrapper currently has active.
+    SelectAccount {
+        provider: ContextMenuProvider,
+        account: String,
+    },
     Exit,
 }
 
@@ -112,6 +123,15 @@ pub struct ContextMenuDescriptor {
 
 impl ContextMenuItem {
     /// Invalid conditions hide the item, including a submenu's entire subtree.
+    pub fn accounts(id: &str, label: &str, provider: ContextMenuProvider) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            render: Expression(format!("providers.{}.enabled", provider.descriptor().key)),
+            kind: ContextMenuItemKind::Accounts { provider },
+        }
+    }
+
     pub fn should_render(&self, context: &DataContext) -> bool {
         theme_engine::evaluate(&self.render.0, context)
             .is_ok_and(|value| value.is_finite() && value != 0.0)
@@ -227,6 +247,9 @@ fn validate_items(
         }
         match &item.kind {
             ContextMenuItemKind::Separator => {}
+            ContextMenuItemKind::Accounts { .. } => {
+                validate_item_label(item, "Account selector", errors)
+            }
             ContextMenuItemKind::Text => validate_item_label(item, "Menu text", errors),
             ContextMenuItemKind::Submenu { items } => {
                 validate_item_label(item, "Submenu", errors);
@@ -308,6 +331,8 @@ pub fn rendered_label(
         "Exit" => language.text("Exit"),
         "Claude Code" => language.text("Claude Code"),
         "Codex" => language.text("Codex"),
+        "Claude Code account" => language.text("Claude Code account"),
+        "Codex account" => language.text("Codex account"),
         "Antigravity" => language.text("Antigravity"),
         "OpenCode" => language.text("OpenCode"),
         "Cursor" => language.text("Cursor"),
@@ -403,6 +428,10 @@ pub fn classic_context_menu() -> ContextMenuDocument {
             ),
         ],
     );
+    let claude_account =
+        ContextMenuItem::accounts("claude-account", "Claude Code account", Provider::Claude);
+    let codex_account =
+        ContextMenuItem::accounts("codex-account", "Codex account", Provider::Codex);
     let languages = std::iter::once(ContextMenuItem::action(
         "language-system",
         "System default",
@@ -451,6 +480,8 @@ pub fn classic_context_menu() -> ContextMenuDocument {
             ContextMenuItem::action("refresh", "Refresh", Action::Refresh),
             frequency,
             providers,
+            claude_account,
+            codex_account,
             settings,
             ContextMenuItem::action("toggle-widget", "Show widget", Action::ToggleWidget),
             ContextMenuItem::action("open-dashboard", "Open Dashboard", Action::OpenDashboard),

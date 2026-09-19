@@ -216,11 +216,19 @@ fn account_settings(
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     for profile in accounts.profiles.iter().filter(|p| p.enabled) {
-                        changed |= dropdown_selectable_value(ui, &mut accounts.selected,
-                            profile.id.clone(), &profile.name).changed();
+                        if dropdown_selectable_value(ui, &mut accounts.selected,
+                            profile.id.clone(), &profile.name).changed() {
+                            accounts.follow_multi_auth = false;
+                            changed = true;
+                        }
                     }
                 });
         });
+        if crate::codex_multi_auth::has_pool_profiles(accounts) {
+            changed |= ui.checkbox(&mut accounts.follow_multi_auth,
+                language.text("Follow the Codex CLI's active account")).changed();
+            ui.weak(language.text("Accounts saved by codex-multi-auth are added and removed automatically."));
+        }
         let mut remove = None;
         for (index, profile) in accounts.profiles.iter_mut().enumerate() {
             ui.push_id(profile.id.clone(), |ui| {
@@ -230,8 +238,12 @@ fn account_settings(
                     let name = ui.add(crate::ui::components::text_field::singleline(&mut profile.name)
                         .desired_width(220.0).hint_text(language.text("Account name")));
                     changed |= name.lost_focus();
-                    if ui.button(language.text("Remove")).clicked() { remove = Some(index); }
+                    if !profile.is_multi_auth() && ui.button(language.text("Remove")).clicked() { remove = Some(index); }
                 });
+                if profile.is_multi_auth() {
+                    ui.weak(format!("{}: {}", language.text("codex-multi-auth account"), profile.multi_auth_account));
+                    ui.weak(format!("{}: accounts.{}.{}", language.text("Theme binding"), provider.descriptor().key, profile.id));
+                } else {
                 ui.label(language.text("Config directory"));
                 let directory = ui.add(crate::ui::components::text_field::singleline(&mut profile.config_dir)
                     .hint_text(if provider == ProviderId::Claude { "~/.claude-work" } else { "~/.codex-work" }));
@@ -256,6 +268,7 @@ fn account_settings(
                         language.text("Uses CODEX_HOME when set; otherwise ~/.codex/auth.json.")
                     }); }
                     Ok(Some(path)) => { ui.weak(path.display().to_string()); }
+                }
                 }
                 if !provider_enabled || !profile.enabled {
                     ui.weak(language.text("Monitoring disabled"));

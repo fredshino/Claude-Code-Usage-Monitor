@@ -186,11 +186,12 @@ enum ContextMenuActionKind {
     ToggleLayerRender,
     LayerActions,
     OpenUrl,
+    SelectAccount,
     Exit,
 }
 
 impl ContextMenuActionKind {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::OpenDashboard,
         Self::Refresh,
         Self::SetUpdateFrequency,
@@ -202,6 +203,7 @@ impl ContextMenuActionKind {
         Self::ToggleLayerRender,
         Self::LayerActions,
         Self::OpenUrl,
+        Self::SelectAccount,
         Self::Exit,
     ];
 
@@ -218,6 +220,7 @@ impl ContextMenuActionKind {
             Self::ToggleLayerRender => "Toggle layer Render",
             Self::LayerActions => "Run layer actions",
             Self::OpenUrl => "Open URL",
+            Self::SelectAccount => "Select account",
             Self::Exit => "Exit",
         }
     }
@@ -246,6 +249,10 @@ impl ContextMenuActionKind {
             },
             Self::OpenUrl => ContextMenuAction::OpenUrl {
                 url: "https://".into(),
+            },
+            Self::SelectAccount => ContextMenuAction::SelectAccount {
+                provider: ContextMenuProvider::Codex,
+                account: crate::codex_multi_auth::FOLLOW_ACTIVE.into(),
             },
             Self::Exit => ContextMenuAction::Exit,
         }
@@ -932,6 +939,7 @@ fn context_menu_tree_row_contents(
             ContextMenuItemKind::Action { .. } => LucideIcon::MousePointerClick,
             ContextMenuItemKind::Text => LucideIcon::Type,
             ContextMenuItemKind::Separator => LucideIcon::Minus,
+            ContextMenuItemKind::Accounts { .. } => LucideIcon::ChevronRight,
             ContextMenuItemKind::Submenu { .. } => {
                 if submenu_open.unwrap_or(false) {
                     LucideIcon::ChevronDown

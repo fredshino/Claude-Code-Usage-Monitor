@@ -103,6 +103,38 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
     }
 }
 
+/// Poll one account from the codex-multi-auth pool. The pool is read-only
+/// here: when its token is rejected, the wrapper is the only party allowed to
+/// refresh it, so the account waits until the wrapper rotates the pool.
+pub(super) fn poll_multi_auth_account(
+    store: &Path,
+    account_id: &str,
+) -> Result<UsageData, PollError> {
+    let token = multi_auth_token(store, account_id)?;
+    match fetch_codex_usage_at(&token, Some(account_id), Some(store)) {
+        Err(PollError::AuthRequired) => {
+            let refreshed = multi_auth_token(store, account_id)?;
+            if refreshed == token {
+                diagnose::log(
+                    "Codex usage poll: codex-multi-auth token rejected; waiting for the wrapper to refresh it",
+                );
+                return Err(PollError::TokenExpired);
+            }
+            fetch_codex_usage_at(&refreshed, Some(account_id), Some(store))
+        }
+        result => result,
+    }
+}
+
+fn multi_auth_token(store: &Path, account_id: &str) -> Result<String, PollError> {
+    let store = crate::codex_multi_auth::read_store(store).ok_or(PollError::NoCredentials)?;
+    let account = store.find(account_id).ok_or(PollError::NoCredentials)?;
+    if account.access_token.trim().is_empty() {
+        return Err(PollError::NoCredentials);
+    }
+    Ok(account.access_token.clone())
+}
+
 fn fetch_codex_usage_at(
     token: &str,
     account_id: Option<&str>,

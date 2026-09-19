@@ -117,6 +117,41 @@ unsafe fn append_context_menu_items(
                     PCWSTR::from_raw(label.as_ptr()),
                 );
             }
+            ContextMenuItemKind::Accounts { provider } => {
+                let entries = account_menu_entries(*provider, language);
+                if entries.iter().flatten().count() < 2 {
+                    continue;
+                }
+                let Ok(submenu) = CreatePopupMenu() else {
+                    continue;
+                };
+                for entry in entries {
+                    let Some((label, action, checked)) = entry else {
+                        let _ = AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null());
+                        continue;
+                    };
+                    let id = 1_000 + actions.len();
+                    let label = native_interop::wide_str(&label);
+                    let flags = if checked {
+                        MF_CHECKED
+                    } else {
+                        MENU_ITEM_FLAGS(0)
+                    };
+                    let _ = AppendMenuW(submenu, flags, id, PCWSTR::from_raw(label.as_ptr()));
+                    actions.push(action);
+                }
+                let label = native_interop::wide_str(&context_menu::rendered_label(
+                    language,
+                    &item.label,
+                    context,
+                ));
+                let _ = AppendMenuW(
+                    menu,
+                    MF_POPUP,
+                    submenu.0 as usize,
+                    PCWSTR::from_raw(label.as_ptr()),
+                );
+            }
             ContextMenuItemKind::Action { action } => {
                 let id = 1_000 + actions.len();
                 let label = native_interop::wide_str(&context_menu::rendered_label(
@@ -130,6 +165,85 @@ unsafe fn append_context_menu_items(
             }
         }
     }
+}
+
+/// Rows for one provider's account submenu; `None` is a separator. A pool
+/// managed by codex-multi-auth adds a "follow the CLI" row ahead of the
+/// accounts themselves.
+type AccountMenuEntry = Option<(String, ContextMenuAction, bool)>;
+
+pub(super) fn account_menu_entries(
+    provider: ProviderId,
+    language: LanguageId,
+) -> Vec<AccountMenuEntry> {
+    let state = lock_state();
+    let Some(accounts) = state
+        .as_ref()
+        .and_then(|state| state.accounts.get(provider))
+    else {
+        return Vec::new();
+    };
+    let pooled = crate::codex_multi_auth::has_pool_profiles(accounts);
+    let following = pooled && accounts.follow_multi_auth;
+    let mut entries = Vec::new();
+    if pooled {
+        entries.push(Some((
+            language.text("Follow the Codex CLI").to_string(),
+            ContextMenuAction::SelectAccount {
+                provider,
+                account: crate::codex_multi_auth::FOLLOW_ACTIVE.into(),
+            },
+            following,
+        )));
+        entries.push(None);
+    }
+    for profile in accounts.profiles.iter().filter(|profile| profile.enabled) {
+        entries.push(Some((
+            profile.name.clone(),
+            ContextMenuAction::SelectAccount {
+                provider,
+                account: profile.id.clone(),
+            },
+            !following && accounts.selected == profile.id,
+        )));
+    }
+    entries
+}
+
+pub(super) fn select_account(hwnd: HWND, provider: ProviderId, account: &str) {
+    let follow = account == crate::codex_multi_auth::FOLLOW_ACTIVE;
+    let pool = if follow {
+        crate::codex_multi_auth::load_store()
+    } else {
+        None
+    };
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        let accounts = match provider {
+            ProviderId::Claude => &mut state.accounts.claude,
+            ProviderId::Codex => &mut state.accounts.codex,
+            _ => return,
+        };
+        if follow {
+            accounts.follow_multi_auth = true;
+            crate::codex_multi_auth::sync_profiles(accounts, pool.as_ref());
+        } else {
+            accounts.follow_multi_auth = false;
+            accounts.selected = account.to_string();
+            accounts.normalize();
+        }
+        if let Some(data) = state.data.as_mut() {
+            data.select_accounts(&state.accounts);
+        }
+    }
+    save_state_settings();
+    position_at_taskbar();
+    render_layered();
+    sync_tray_icon(hwnd);
+    request_poll(hwnd);
 }
 
 pub(super) fn context_menu_action_flags(
@@ -205,6 +319,17 @@ pub(super) fn context_menu_action_flags(
                     })
             })
             .unwrap_or(false),
+        ContextMenuAction::SelectAccount { provider, account } => {
+            state.accounts.get(*provider).is_some_and(|accounts| {
+                let following = accounts.follow_multi_auth
+                    && crate::codex_multi_auth::has_pool_profiles(accounts);
+                if account == crate::codex_multi_auth::FOLLOW_ACTIVE {
+                    following
+                } else {
+                    !following && accounts.selected == *account
+                }
+            })
+        }
         _ => false,
     };
     let disabled = matches!(
@@ -280,7 +405,8 @@ pub(super) fn execute_context_menu_action(
         | ContextMenuAction::LegacyResetPosition
         | ContextMenuAction::ToggleLayerRender { .. }
         | ContextMenuAction::LayerActions { .. }
-        | ContextMenuAction::OpenUrl { .. } => None,
+        | ContextMenuAction::OpenUrl { .. }
+        | ContextMenuAction::SelectAccount { .. } => None,
     };
     if let Some(command) = static_command {
         unsafe {
@@ -315,6 +441,9 @@ pub(super) fn execute_context_menu_action(
         }
         ContextMenuAction::OpenUrl { url } => {
             open_web_url(hwnd, &url, "context menu URL could not be opened")
+        }
+        ContextMenuAction::SelectAccount { provider, account } => {
+            select_account(hwnd, provider, &account)
         }
         _ => {}
     }
