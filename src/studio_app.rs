@@ -854,6 +854,7 @@ fn context_menu_tree_row_contents(
             ContextMenuItemKind::Action { .. } => LucideIcon::MousePointerClick,
             ContextMenuItemKind::Text => LucideIcon::Type,
             ContextMenuItemKind::Separator => LucideIcon::Minus,
+            ContextMenuItemKind::Accounts { .. } => LucideIcon::ChevronRight,
             ContextMenuItemKind::Submenu { .. } => {
                 if submenu_open.unwrap_or(false) {
                     LucideIcon::ChevronDown

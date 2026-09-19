@@ -326,6 +326,23 @@ pub(super) fn preview_context_menu_items(
                     state.appearance,
                 );
             }
+            ContextMenuItemKind::Accounts { .. } => {
+                let label =
+                    context_menu::rendered_label(state.language, &item.label, state.context);
+                let response = ui.add(native_context_menu_button(
+                    state.appearance,
+                    ui.available_width(),
+                ));
+                paint_native_context_menu_row(
+                    ui,
+                    &response,
+                    &label,
+                    false,
+                    true,
+                    false,
+                    state.appearance,
+                );
+            }
             ContextMenuItemKind::Submenu { items } => {
                 let label =
                     context_menu::rendered_label(state.language, &item.label, state.context);

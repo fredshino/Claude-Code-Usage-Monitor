@@ -259,6 +259,13 @@ const MENU_ACTIONS: &[ActionSpec] = &[
         "set_language",
     ),
     (
+        "select_account",
+        SETTINGS,
+        "Select account",
+        "select_account(provider, account)",
+        "select_account",
+    ),
+    (
         "toggle_layer_render",
         LAYERS,
         "Toggle layer Render",
@@ -1445,6 +1452,16 @@ fn menu_action_details(
         "open_url" => ContextMenuAction::OpenUrl {
             url: url_form(ui, forms, language)?,
         },
+        "select_account" => {
+            note(
+                ui,
+                language.text("Follows the account the Codex CLI is using. Replace * with an account id to pin one."),
+            );
+            ContextMenuAction::SelectAccount {
+                provider: ContextMenuProvider::Codex,
+                account: crate::codex_multi_auth::FOLLOW_ACTIVE.into(),
+            }
+        }
         id => {
             let verb = id.strip_prefix("layer:").unwrap_or(id);
             ContextMenuAction::LayerActions {

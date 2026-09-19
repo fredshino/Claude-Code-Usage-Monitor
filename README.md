@@ -90,6 +90,12 @@ Grok Build usage comes from the session the CLI stores in `%USERPROFILE%\.grok\a
 
 GitHub Copilot usage comes from `api.github.com/copilot_internal/user`, the endpoint Copilot's own editors and CLI read. The monitor uses the first GitHub login that endpoint accepts, in this order: the `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` environment variable, the Copilot CLI login, then the GitHub CLI login, both read from Windows Credential Manager. Copilot spends one premium-request pool per calendar month, so the monitor shows it on the long-window row and leaves the short-window row empty. Metered chat and completion allowances, as on Copilot Free, are available to themes through `copilot.limits.chat` and `copilot.limits.completions`.
 
+### Several Codex accounts with codex-multi-auth
+
+If the Codex CLI is managed by [codex-multi-auth](https://www.npmjs.com/package/codex-multi-auth), the monitor picks up every account saved in its pool (`~/.codex/multi-auth/openai-codex-accounts.json`, or the same path under `CODEX_HOME`) and lists them under **Accounts** in the dashboard, named by email. Nothing is written back to the pool: the wrapper keeps refreshing the tokens, and the monitor only reads the current access token when it polls. An account whose token the wrapper has not refreshed yet shows an authentication error until the wrapper next uses it.
+
+Right-click the widget and open **Codex account** to choose which account the widget shows. **Follow the Codex CLI** keeps it on whatever account you last switched to with `codex-multi-auth switch`; picking an account by name pins it. The same choice is available as **Default account** in the dashboard. Custom themes can show every account at once through the `accounts.codex.<id>` bindings, and custom context menus can use `select_account(codex, "<id>")` or `select_account(codex, *)`.
+
 ## Data and privacy
 
 The monitor reads local sign-in credentials for enabled providers and sends usage requests directly to their official services. It has no backend service, collects no telemetry, and does not upload credentials or project files.

@@ -38,10 +38,15 @@ pub(super) fn poll_accounts(
         settings,
         previous,
         force,
-        |provider, path| match path {
+        |provider, path, profile| match path {
             Some(path) => match provider {
                 ProviderId::Claude => claude::poll_account(path),
-                ProviderId::Codex => codex::poll_account(path),
+                ProviderId::Codex => match profile.filter(|profile| profile.is_multi_auth()) {
+                    Some(profile) => {
+                        codex::poll_multi_auth_account(path, &profile.multi_auth_account)
+                    }
+                    None => codex::poll_account(path),
+                },
                 _ => poll_provider(provider),
             },
             None => poll_provider(provider),
@@ -57,7 +62,12 @@ fn poll_accounts_with<F>(
     poll: F,
 ) -> Result<AppUsageData, PollFailure>
 where
-    F: Fn(ProviderId, Option<&std::path::Path>) -> Result<UsageData, PollError> + Sync,
+    F: Fn(
+            ProviderId,
+            Option<&std::path::Path>,
+            Option<&AccountProfile>,
+        ) -> Result<UsageData, PollError>
+        + Sync,
 {
     poll_accounts_with_history(enabled, settings, None, false, poll)
 }
@@ -71,7 +81,12 @@ fn poll_accounts_with_history<F>(
     poll: F,
 ) -> Result<AppUsageData, PollFailure>
 where
-    F: Fn(ProviderId, Option<&std::path::Path>) -> Result<UsageData, PollError> + Sync,
+    F: Fn(
+            ProviderId,
+            Option<&std::path::Path>,
+            Option<&AccountProfile>,
+        ) -> Result<UsageData, PollError>
+        + Sync,
 {
     poll_accounts_with_progress(enabled, settings, previous, force, poll, |_| {})
 }
@@ -85,7 +100,12 @@ fn poll_accounts_with_progress<F>(
     mut on_progress: impl FnMut(AppUsageData),
 ) -> Result<AppUsageData, PollFailure>
 where
-    F: Fn(ProviderId, Option<&std::path::Path>) -> Result<UsageData, PollError> + Sync,
+    F: Fn(
+            ProviderId,
+            Option<&std::path::Path>,
+            Option<&AccountProfile>,
+        ) -> Result<UsageData, PollError>
+        + Sync,
 {
     let mut targets = Vec::new();
     for provider in enabled.iter() {
@@ -121,6 +141,7 @@ where
         if let Some(group) = groups.iter_mut().find(|group| {
             group[0].provider == target.provider
                 && source_key(&group[0].path) == source_key(&target.path)
+                && pool_account(&group[0]) == pool_account(&target)
         }) {
             group.push(target);
         } else {
@@ -169,7 +190,7 @@ where
                 for _ in 0..if paused_error.is_some() { 0 } else { 2 } {
                     result = match &target.path {
                         Err(_) => Err(PollError::NoCredentials),
-                        Ok(path) => poll(target.provider, path.as_deref()),
+                        Ok(path) => poll(target.provider, path.as_deref(), target.profile.as_ref()),
                     };
                     let current_signature = target.signature();
                     if signature == current_signature {
@@ -266,6 +287,16 @@ fn append_account_result(
     }
 }
 
+/// Pool accounts share one file but are distinct accounts, so they must not
+/// share a poll result the way two profiles pointing at one auth.json do.
+fn pool_account(target: &Target) -> &str {
+    target
+        .profile
+        .as_ref()
+        .map(|profile| profile.multi_auth_account.as_str())
+        .unwrap_or("")
+}
+
 fn source_key(path: &Result<Option<PathBuf>, String>) -> String {
     match path {
         Ok(Some(path)) => crate::accounts::source_key(path),
@@ -306,6 +337,57 @@ mod tests {
     use crate::accounts::file_signature;
     use crate::accounts::ProviderAccounts;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn pool_accounts_sharing_one_file_are_polled_separately() {
+        use crate::codex_multi_auth::profile_id;
+        let settings = AccountSettings {
+            codex: ProviderAccounts {
+                profiles: ["org-a", "org-b"]
+                    .into_iter()
+                    .map(|account| AccountProfile {
+                        id: profile_id(account),
+                        name: account.into(),
+                        multi_auth_account: account.into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                selected: profile_id("org-b"),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let polled = AtomicUsize::new(0);
+        let data = poll_accounts_with(
+            ProviderSet::from_enabled([ProviderId::Codex]),
+            &settings,
+            |provider, path, profile| {
+                polled.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(provider, ProviderId::Codex);
+                assert!(path.is_some_and(|path| path.ends_with("openai-codex-accounts.json")));
+                let profile = profile.expect("pool profiles reach the poller");
+                Ok(usage(if profile.multi_auth_account == "org-a" {
+                    10.0
+                } else {
+                    20.0
+                }))
+            },
+        )
+        .unwrap();
+        assert_eq!(polled.load(Ordering::Relaxed), 2);
+        assert_eq!(data.accounts.len(), 2);
+        let percentages: Vec<f64> = data
+            .accounts
+            .iter()
+            .map(|account| account.usage.as_ref().unwrap().session.percentage)
+            .collect();
+        assert_eq!(percentages, vec![10.0, 20.0]);
+        assert_eq!(
+            data.get(ProviderId::Codex).unwrap().session.percentage,
+            20.0
+        );
+        assert_eq!(data.selected_account_name(ProviderId::Codex), Some("org-b"));
+    }
 
     fn settings() -> AccountSettings {
         AccountSettings {
@@ -352,7 +434,7 @@ mod tests {
             &settings,
             None,
             false,
-            |provider, _| {
+            |provider, _, _| {
                 if provider == ProviderId::Claude {
                     wait.lock()
                         .unwrap()
@@ -383,7 +465,8 @@ mod tests {
     fn partial_account_results_preserve_selection_and_error_rules() {
         let settings = settings();
         let previous =
-            poll_accounts_with(ProviderSet::default(), &settings, |_, _| Ok(usage(25.0))).unwrap();
+            poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| Ok(usage(25.0)))
+                .unwrap();
         let personal = previous
             .accounts
             .iter()
@@ -457,7 +540,7 @@ mod tests {
             PollError::HttpStatus(401),
             PollError::HttpStatus(403),
         ] {
-            let first = poll_accounts_with(ProviderSet::default(), &settings, |_, path| {
+            let first = poll_accounts_with(ProviderSet::default(), &settings, |_, path, _| {
                 if path.unwrap().to_string_lossy().contains("work") {
                     Err(error)
                 } else {
@@ -472,7 +555,7 @@ mod tests {
                 &settings,
                 Some(&first),
                 false,
-                |_, path| {
+                |_, path, _| {
                     assert!(
                         !path.unwrap().to_string_lossy().contains("work"),
                         "paused account must not refresh its CLI token"
@@ -500,7 +583,7 @@ mod tests {
                 &settings,
                 Some(&second),
                 true,
-                |_, _| {
+                |_, _, _| {
                     calls.fetch_add(1, Ordering::SeqCst);
                     Err(error)
                 },
@@ -527,7 +610,7 @@ mod tests {
         let mut settings = settings();
         settings.claude.profiles.truncate(1);
         settings.claude.profiles[0].config_dir = directory.to_string_lossy().into_owned();
-        let first = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+        let first = poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| {
             Err(PollError::TokenExpired)
         })
         .unwrap();
@@ -538,7 +621,7 @@ mod tests {
             &settings,
             Some(&first),
             false,
-            |_, _| panic!("unchanged expired credentials must stay paused"),
+            |_, _, _| panic!("unchanged expired credentials must stay paused"),
         )
         .unwrap();
         assert!(waiting.new_auth_failures(Some(&first), false).is_empty());
@@ -548,7 +631,7 @@ mod tests {
             &settings,
             Some(&waiting),
             false,
-            |_, _| Ok(usage(80.0)),
+            |_, _, _| Ok(usage(80.0)),
         )
         .unwrap();
         assert!(resumed.new_auth_failures(Some(&waiting), false).is_empty());
@@ -566,7 +649,7 @@ mod tests {
             &settings,
             Some(&resumed),
             false,
-            |_, _| Err(PollError::AuthRequired),
+            |_, _, _| Err(PollError::AuthRequired),
         )
         .unwrap();
         assert_eq!(
@@ -580,7 +663,7 @@ mod tests {
     #[test]
     fn failing_selected_account_never_borrows_another_accounts_usage() {
         let settings = settings();
-        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, path| {
+        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, path, _| {
             if path.unwrap().to_string_lossy().contains("work") {
                 Err(PollError::AuthRequired)
             } else {
@@ -602,7 +685,8 @@ mod tests {
     fn stale_data_requires_the_same_profile_source_and_transient_error() {
         let settings = settings();
         let previous =
-            poll_accounts_with(ProviderSet::default(), &settings, |_, _| Ok(usage(42.0))).unwrap();
+            poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| Ok(usage(42.0)))
+                .unwrap();
         for (error, change_source, change_path, expected) in [
             (PollError::RequestFailed, false, false, true),
             (PollError::RequestFailed, true, false, false),
@@ -618,7 +702,8 @@ mod tests {
             (PollError::NoCredentials, false, false, false),
         ] {
             let mut fresh =
-                poll_accounts_with(ProviderSet::default(), &settings, |_, _| Err(error)).unwrap();
+                poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| Err(error))
+                    .unwrap();
             if change_source {
                 fresh.accounts[1].source_signature.push('x');
             }
@@ -636,7 +721,7 @@ mod tests {
     #[test]
     fn http_failure_survives_cache_and_clears_after_success() {
         let settings = settings();
-        let failed = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+        let failed = poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| {
             Err(PollError::HttpStatus(429))
         })
         .unwrap();
@@ -650,7 +735,7 @@ mod tests {
             &settings,
             Some(&failed),
             false,
-            |_, _| {
+            |_, _, _| {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(usage(35.0))
             },
@@ -678,7 +763,7 @@ mod tests {
     #[test]
     fn cache_round_trip_selection_removal_and_path_changes_are_isolated() {
         let mut settings = settings();
-        let mut data = poll_accounts_with(ProviderSet::default(), &settings, |_, path| {
+        let mut data = poll_accounts_with(ProviderSet::default(), &settings, |_, path, _| {
             Ok(usage(if path.unwrap().to_string_lossy().contains("work") {
                 80.0
             } else {
@@ -713,7 +798,7 @@ mod tests {
         let mut settings = settings();
         settings.claude.profiles[0].config_dir.clear();
         settings.claude.profiles[1].enabled = false;
-        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| {
             panic!("invalid profile polled")
         })
         .unwrap();
@@ -739,7 +824,7 @@ mod tests {
         let active = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
         let calls = AtomicUsize::new(0);
-        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| {
             calls.fetch_add(1, Ordering::SeqCst);
             let current = active.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(current, Ordering::SeqCst);
@@ -771,7 +856,7 @@ mod tests {
         settings.claude.profiles.truncate(1);
         settings.claude.profiles[0].config_dir = directory.to_string_lossy().into_owned();
         let calls = AtomicUsize::new(0);
-        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+        let data = poll_accounts_with(ProviderSet::default(), &settings, |_, _, _| {
             if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 std::fs::write(&path, "fixture after token rotation, different length").unwrap();
                 Ok(usage(10.0))

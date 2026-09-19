@@ -54,6 +54,9 @@ pub struct AccountProfile {
     pub name: String,
     pub config_dir: String,
     pub credentials_path: String,
+    /// codex-multi-auth account id when this profile comes from its pool;
+    /// empty for profiles that read a credentials file.
+    pub multi_auth_account: String,
     pub enabled: bool,
 }
 
@@ -64,6 +67,7 @@ impl Default for AccountProfile {
             name: "Default".into(),
             config_dir: String::new(),
             credentials_path: String::new(),
+            multi_auth_account: String::new(),
             enabled: true,
         }
     }
@@ -76,6 +80,8 @@ pub struct ProviderAccounts {
     pub selected: String,
     /// Retain retired IDs so existing theme bindings never target a new account.
     pub used_ids: std::collections::BTreeSet<String>,
+    /// Keep `selected` equal to the account the codex-multi-auth wrapper is using.
+    pub follow_multi_auth: bool,
 }
 
 impl Default for ProviderAccounts {
@@ -84,6 +90,7 @@ impl Default for ProviderAccounts {
             profiles: vec![AccountProfile::default()],
             selected: "default".into(),
             used_ids: ["default".into()].into(),
+            follow_multi_auth: false,
         }
     }
 }
@@ -214,13 +221,26 @@ pub fn expand_path(path: &Path) -> Option<PathBuf> {
 }
 
 impl AccountProfile {
+    pub fn is_multi_auth(&self) -> bool {
+        !self.multi_auth_account.is_empty()
+    }
+
     pub fn same_source(&self, other: &Self) -> bool {
         self.id == other.id
             && self.config_dir == other.config_dir
             && self.credentials_path == other.credentials_path
+            && self.multi_auth_account == other.multi_auth_account
     }
 
     pub fn credential_path(&self, provider: ProviderId) -> Result<Option<PathBuf>, String> {
+        if self.is_multi_auth() {
+            if provider != ProviderId::Codex {
+                return Err("Only Codex accounts can come from codex-multi-auth".into());
+            }
+            return crate::codex_multi_auth::store_path()
+                .map(Some)
+                .ok_or_else(|| "The codex-multi-auth account file could not be located".into());
+        }
         if !self.credentials_path.trim().is_empty() {
             return expand_path(Path::new(self.credentials_path.trim()))
                 .map(Some)
