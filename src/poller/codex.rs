@@ -1,7 +1,7 @@
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
@@ -11,7 +11,7 @@ use crate::diagnose;
 use crate::models::{CodexCreditsState, CreditsSection, UsageData, UsageSection};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub(super) const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Deserialize)]
 struct CodexAuthFile {
@@ -22,6 +22,26 @@ struct CodexAuthFile {
 struct CodexTokenData {
     access_token: String,
     account_id: Option<String>,
+    /// Compared with the codex-multi-auth pool by the refresh scheduler; never
+    /// logged. Optional so a null here cannot break the plain auth.json poll.
+    #[serde(default)]
+    refresh_token: Option<String>,
+}
+
+/// The account and refresh token auth.json holds, for the refresh scheduler.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct CliAuth {
+    pub account_id: String,
+    pub refresh_token: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CliAuthState {
+    /// No auth.json path, or the file does not exist.
+    Missing,
+    /// The file exists but could not be read or parsed.
+    Unreadable,
+    Present(CliAuth),
 }
 
 #[derive(Deserialize)]
@@ -103,26 +123,129 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
     }
 }
 
-/// Poll one account from the codex-multi-auth pool. The pool is read-only
-/// here: when its token is rejected, the wrapper is the only party allowed to
-/// refresh it, so the account waits until the wrapper rotates the pool.
+/// Poll one account from the codex-multi-auth pool. Both credential files are
+/// read-only here: the wrapper refreshes the pool and the Codex CLI refreshes
+/// auth.json on its own, so when auth.json holds this same account it can
+/// serve the poll while the pool copy is expired or rejected.
 pub(super) fn poll_multi_auth_account(
     store: &Path,
     account_id: &str,
 ) -> Result<UsageData, PollError> {
-    let token = multi_auth_token(store, account_id)?;
-    match fetch_codex_usage_at(&token, Some(account_id), Some(store)) {
-        Err(PollError::AuthRequired) => {
-            let refreshed = multi_auth_token(store, account_id)?;
-            if refreshed == token {
-                diagnose::log(
-                    "Codex usage poll: codex-multi-auth token rejected; waiting for the wrapper to refresh it",
-                );
-                return Err(PollError::TokenExpired);
+    poll_multi_auth_account_with(
+        store,
+        account_id,
+        codex_auth_path().as_deref(),
+        now_ms(),
+        |token| fetch_codex_usage_at(token, Some(account_id), Some(store)),
+    )
+}
+
+fn poll_multi_auth_account_with(
+    store: &Path,
+    account_id: &str,
+    auth_path: Option<&Path>,
+    now_ms: i64,
+    fetch: impl Fn(&str) -> Result<UsageData, PollError>,
+) -> Result<UsageData, PollError> {
+    let pool = crate::codex_multi_auth::read_store(store).ok_or(PollError::NoCredentials)?;
+    let account = pool.find(account_id).ok_or(PollError::NoCredentials)?;
+    let pool_token = Some(account.access_token.trim())
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned);
+    let cli_token = auth_path
+        .and_then(|path| read_auth_file(path).ok().flatten())
+        .filter(|tokens| tokens.account_id.as_deref() == Some(account_id))
+        .map(|tokens| tokens.access_token.trim().to_owned())
+        .filter(|token| !token.is_empty() && Some(token) != pool_token.as_ref());
+    // Skip a request that is bound to fail when the pool says its copy expired.
+    let pool_expired = account
+        .expires_at_ms()
+        .is_some_and(|expires_at| expires_at <= now_ms);
+    let candidates = if pool_expired {
+        [(cli_token, true), (pool_token, false)]
+    } else {
+        [(pool_token, false), (cli_token, true)]
+    };
+    let mut rejected = Vec::new();
+    for (token, from_cli) in candidates {
+        let Some(token) = token else {
+            continue;
+        };
+        match fetch(&token) {
+            Ok(data) => {
+                if from_cli {
+                    diagnose::log(format!(
+                        "Codex usage poll: served pool account {} from auth.json",
+                        crate::codex_multi_auth::profile_id(account_id)
+                    ));
+                }
+                return Ok(data);
             }
-            fetch_codex_usage_at(&refreshed, Some(account_id), Some(store))
+            Err(PollError::AuthRequired) => rejected.push(token),
+            Err(error) => return Err(error),
         }
-        result => result,
+    }
+    if rejected.is_empty() {
+        return Err(PollError::NoCredentials);
+    }
+    // The wrapper may have rotated the pool while the requests were in flight.
+    match multi_auth_token(store, account_id) {
+        Ok(refreshed) if !rejected.iter().any(|token| token == refreshed.trim()) => {
+            match fetch(refreshed.trim()) {
+                Err(PollError::AuthRequired) => Err(PollError::TokenExpired),
+                result => result,
+            }
+        }
+        _ => {
+            diagnose::log(
+                "Codex usage poll: codex-multi-auth token rejected; waiting for the wrapper to refresh it",
+            );
+            Err(PollError::TokenExpired)
+        }
+    }
+}
+
+pub(super) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
+}
+
+enum AuthFileError {
+    Missing,
+    Unreadable,
+}
+
+/// auth.json without the error logging of `read_codex_credentials_at`: pool
+/// users read it on every poll and a missing file is normal for them.
+fn read_auth_file(path: &Path) -> Result<Option<CodexTokenData>, AuthFileError> {
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AuthFileError::Missing
+        } else {
+            AuthFileError::Unreadable
+        }
+    })?;
+    serde_json::from_str::<CodexAuthFile>(&content)
+        .map(|auth| auth.tokens)
+        .map_err(|_| AuthFileError::Unreadable)
+}
+
+pub(super) fn read_cli_auth(path: Option<&Path>) -> CliAuthState {
+    let Some(path) = path else {
+        return CliAuthState::Missing;
+    };
+    match read_auth_file(path) {
+        Err(AuthFileError::Missing) => CliAuthState::Missing,
+        Err(AuthFileError::Unreadable) => CliAuthState::Unreadable,
+        Ok(tokens) => CliAuthState::Present(
+            tokens
+                .map(|tokens| CliAuth {
+                    account_id: tokens.account_id.unwrap_or_default(),
+                    refresh_token: tokens.refresh_token.unwrap_or_default(),
+                })
+                .unwrap_or_default(),
+        ),
     }
 }
 
@@ -348,6 +471,28 @@ pub(super) fn credential_watch_snapshot() -> Vec<String> {
     vec![signature]
 }
 
+/// Source signature of a Codex credential file. A pool account can also be
+/// served from auth.json, so pool signatures cover both files.
+pub(super) fn account_watch_signature(path: &Path) -> String {
+    if path
+        .file_name()
+        .is_some_and(|name| name == crate::codex_multi_auth::STORE_FILE_NAME)
+    {
+        pool_watch_signature(path, codex_auth_path().as_deref())
+    } else {
+        crate::accounts::file_signature(path)
+    }
+}
+
+fn pool_watch_signature(pool: &Path, auth: Option<&Path>) -> String {
+    crate::accounts::fingerprint(&format!(
+        "{}|{}",
+        crate::accounts::file_signature(pool),
+        auth.map(crate::accounts::file_signature)
+            .unwrap_or_default()
+    ))
+}
+
 pub(super) fn codex_auth_path() -> Option<PathBuf> {
     if std::env::var_os("CODEX_HOME").is_some_and(|value| !value.is_empty()) {
         let codex_home =
@@ -475,6 +620,176 @@ fn wait_for_refresh(child: &mut std::process::Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "usage-codex-{tag}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const NOW: i64 = 1_000_000_000_000;
+
+    fn write_pool(path: &Path, expires_at: i64) {
+        std::fs::write(
+            path,
+            format!(
+                r#"{{"accounts":[{{"accountId":"org-a","accessToken":"pool","expiresAt":{expires_at}}}]}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_auth(path: &Path, account_id: &str, access_token: &str) {
+        std::fs::write(
+            path,
+            format!(
+                r#"{{"tokens":{{"access_token":"{access_token}","account_id":"{account_id}","refresh_token":"r"}}}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Polls `account_id` with a fake endpoint that accepts only `accepts`
+    /// (or fails every call with `failure` when given) and records the tokens
+    /// it was sent.
+    fn poll_with(
+        store: &Path,
+        auth: &Path,
+        account_id: &str,
+        accepts: &[&str],
+        failure: Option<PollError>,
+    ) -> (Result<UsageData, PollError>, Vec<String>) {
+        let calls = RefCell::new(Vec::new());
+        let result = poll_multi_auth_account_with(store, account_id, Some(auth), NOW, |token| {
+            calls.borrow_mut().push(token.to_string());
+            match failure {
+                Some(error) => Err(error),
+                None if accepts.contains(&token) => Ok(UsageData::default()),
+                None => Err(PollError::AuthRequired),
+            }
+        });
+        (result, calls.into_inner())
+    }
+
+    #[test]
+    fn pool_accounts_fall_back_to_auth_json_for_the_same_account() {
+        let dir = TempDir::new("fallback");
+        let store = dir.0.join(crate::codex_multi_auth::STORE_FILE_NAME);
+        let auth = dir.0.join("auth.json");
+        write_pool(&store, NOW + 3_600_000);
+        write_auth(&auth, "org-a", "cli");
+
+        let (result, calls) = poll_with(&store, &auth, "org-a", &["pool"], None);
+        assert!(result.is_ok());
+        assert_eq!(calls, ["pool"]);
+
+        let (result, calls) = poll_with(&store, &auth, "org-a", &["cli"], None);
+        assert!(result.is_ok());
+        assert_eq!(calls, ["pool", "cli"]);
+
+        let (result, calls) =
+            poll_with(&store, &auth, "org-a", &[], Some(PollError::RequestFailed));
+        assert_eq!(result.unwrap_err(), PollError::RequestFailed);
+        assert_eq!(calls, ["pool"], "a non-auth failure is not retried");
+
+        let (result, calls) = poll_with(&store, &auth, "org-z", &["pool", "cli"], None);
+        assert_eq!(result.unwrap_err(), PollError::NoCredentials);
+        assert!(calls.is_empty());
+
+        write_pool(&store, NOW - 1);
+        let (result, calls) = poll_with(&store, &auth, "org-a", &["cli"], None);
+        assert!(result.is_ok());
+        assert_eq!(calls, ["cli"], "an expired pool token is not tried first");
+
+        write_pool(&store, NOW + 3_600_000);
+        write_auth(&auth, "org-b", "cli");
+        let (result, calls) = poll_with(&store, &auth, "org-a", &["cli"], None);
+        assert_eq!(result.unwrap_err(), PollError::TokenExpired);
+        assert_eq!(calls, ["pool"], "another account's token is never sent");
+
+        write_auth(&auth, "org-a", "pool");
+        let (result, calls) = poll_with(&store, &auth, "org-a", &[], None);
+        assert_eq!(result.unwrap_err(), PollError::TokenExpired);
+        assert_eq!(calls, ["pool"], "the same token is sent once");
+    }
+
+    #[test]
+    fn read_cli_auth_reads_account_and_refresh_token() {
+        let dir = TempDir::new("cli-auth");
+        let auth = dir.0.join("auth.json");
+        assert_eq!(read_cli_auth(None), CliAuthState::Missing);
+        assert_eq!(read_cli_auth(Some(&auth)), CliAuthState::Missing);
+        write_auth(&auth, "org-a", "access");
+        assert_eq!(
+            read_cli_auth(Some(&auth)),
+            CliAuthState::Present(CliAuth {
+                account_id: "org-a".into(),
+                refresh_token: "r".into(),
+            })
+        );
+        std::fs::write(&auth, r#"{"tokens":{"access_token":"access"}}"#).unwrap();
+        assert_eq!(
+            read_cli_auth(Some(&auth)),
+            CliAuthState::Present(CliAuth::default())
+        );
+        std::fs::write(
+            &auth,
+            r#"{"tokens":{"access_token":"access","account_id":"org-a","refresh_token":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_cli_auth(Some(&auth)),
+            CliAuthState::Present(CliAuth {
+                account_id: "org-a".into(),
+                refresh_token: String::new(),
+            })
+        );
+        std::fs::write(&auth, "{}").unwrap();
+        assert_eq!(
+            read_cli_auth(Some(&auth)),
+            CliAuthState::Present(CliAuth::default())
+        );
+        std::fs::write(&auth, "not json").unwrap();
+        assert_eq!(read_cli_auth(Some(&auth)), CliAuthState::Unreadable);
+    }
+
+    #[test]
+    fn pool_signatures_follow_auth_json() {
+        let dir = TempDir::new("signature");
+        let store = dir.0.join(crate::codex_multi_auth::STORE_FILE_NAME);
+        let auth = dir.0.join("auth.json");
+        write_pool(&store, NOW);
+        write_auth(&auth, "org-a", "first");
+        let before = pool_watch_signature(&store, Some(&auth));
+        assert_eq!(before, pool_watch_signature(&store, Some(&auth)));
+        write_auth(&auth, "org-a", "refreshed by the Codex CLI");
+        let after_cli = pool_watch_signature(&store, Some(&auth));
+        assert_ne!(before, after_cli);
+        write_pool(&store, NOW + 3_600_000);
+        assert_ne!(after_cli, pool_watch_signature(&store, Some(&auth)));
+        assert_eq!(
+            pool_watch_signature(&store, None),
+            pool_watch_signature(&store, None)
+        );
+    }
 
     #[test]
     fn credit_history_is_scoped_to_source_and_account() {
