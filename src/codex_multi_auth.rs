@@ -105,18 +105,22 @@ impl Store {
             .find(|account| account.account_id == account_id)
     }
 
-    /// The account the wrapper writes into auth.json, resolved the way
-    /// codex-multi-auth 2.15 does it (`resolveActiveIndex(storage, "codex")`):
-    /// the codex family index, else `activeIndex`, else the first account,
-    /// clamped into range.
+    /// The account the wrapper writes into auth.json. codex-multi-auth 2.15
+    /// normalizes the pool on load (`storage.js`): the codex family index when
+    /// it is a number, else `activeIndex` (first account when absent), each
+    /// truncated and clamped into range; `resolveActiveIndex` then reads it.
     pub fn codex_active(&self) -> Option<&StoreAccount> {
         let last = self.accounts.len().checked_sub(1)?;
-        let raw = match self.active_index_by_family.get("codex") {
-            None | Some(Value::Null) => self.active_index.map(|index| index as f64),
-            Some(value) => value.as_f64(),
+        let active_index = self.active_index.unwrap_or(0).min(last);
+        let index = match self
+            .active_index_by_family
+            .get("codex")
+            .and_then(Value::as_f64)
+        {
+            Some(raw) if raw.is_finite() => (raw.max(0.0) as usize).min(last),
+            _ => active_index,
         };
-        let raw = raw.filter(|raw| raw.is_finite()).unwrap_or(0.0);
-        self.accounts.get((raw.max(0.0) as usize).min(last))
+        self.accounts.get(index)
     }
 }
 
@@ -330,7 +334,7 @@ mod tests {
         expect(r#","activeIndexByFamily":{"codex":9}"#, "b");
         expect(
             r#","activeIndex":1,"activeIndexByFamily":{"codex":"x"}"#,
-            "a",
+            "b",
         );
         expect(r#","activeIndexByFamily":{"codex":-2}"#, "a");
         assert_eq!(active_email(r#"{"accounts":[],"activeIndex":0}"#), None);

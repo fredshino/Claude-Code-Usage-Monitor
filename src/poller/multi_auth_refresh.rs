@@ -28,12 +28,19 @@ const REFRESH_WINDOW_MS: i64 = 5 * 60 * 1000;
 const SYNC_MARGIN_MS: i64 = 2 * 60 * 1000;
 /// A run that left an account's expiry unchanged is retried after this long.
 const RETRY_AFTER_MS: i64 = 60 * 60 * 1000;
-/// Longest single sleep; polls and finished runs also wake the thread.
+/// Longest single sleep; every poll also wakes the thread.
 const MAX_WAIT_MS: i64 = 60 * 60 * 1000;
 const MIN_WAIT_MS: i64 = 1_000;
+/// The wrapper runs its install setup (app binding, launcher routing, config
+/// edits) before any command until its marker reaches this version
+/// (`FIRST_RUN_MARKER_VERSION`, 2.15), so a background run waits for it.
+const WRAPPER_SETUP_VERSION: f64 = 2.0;
+const WRAPPER_SETUP_MARKER: &str = "first-run-setup.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BlockReason {
+    /// The wrapper has not finished its own first-run setup.
+    WrapperSetupPending,
     /// `check` re-enables every account it finds healthy.
     DisabledAccountInPool,
     AuthUnreadable,
@@ -80,6 +87,7 @@ fn refresh_due_at(account: &StoreAccount) -> i64 {
 fn decide(
     pool: Option<&Store>,
     cli: &CliAuthState,
+    wrapper_ready: bool,
     monitored: &[String],
     attempts: &HashMap<String, Attempt>,
     now_ms: i64,
@@ -112,6 +120,9 @@ fn decide(
     }
     if due.is_empty() {
         return next.map_or(Decision::Idle, Decision::WaitUntil);
+    }
+    if !wrapper_ready {
+        return Decision::Blocked(BlockReason::WrapperSetupPending);
     }
     if pool
         .accounts
@@ -200,11 +211,24 @@ impl RefreshScheduler {
         self.generation = self.generation.wrapping_add(1);
     }
 
-    fn step(&mut self, pool: Option<&Store>, cli: &CliAuthState, now_ms: i64) -> Step {
+    fn step(
+        &mut self,
+        pool: Option<&Store>,
+        cli: &CliAuthState,
+        wrapper_ready: bool,
+        now_ms: i64,
+    ) -> Step {
         if self.in_flight {
             return Step::sleep(MAX_WAIT_MS);
         }
-        match decide(pool, cli, &self.monitored, &self.attempts, now_ms) {
+        match decide(
+            pool,
+            cli,
+            wrapper_ready,
+            &self.monitored,
+            &self.attempts,
+            now_ms,
+        ) {
             Decision::Idle => Step::sleep(MAX_WAIT_MS),
             Decision::WaitUntil(at) => Step::sleep(at.saturating_sub(now_ms)),
             Decision::Blocked(reason) => {
@@ -311,13 +335,14 @@ fn run(shared: &'static Shared) {
             .and_then(crate::codex_multi_auth::read_store);
         let auth_path = codex::codex_auth_path();
         let cli = codex::read_cli_auth(auth_path.as_deref());
+        let wrapper_ready = store.as_deref().is_some_and(wrapper_setup_done);
         guard = lock(shared);
         if guard.generation != seen {
             continue;
         }
         // The lock is held from the check above into the wait, so a
         // notification cannot slip in between deciding and sleeping.
-        match guard.step(pool.as_ref(), &cli, codex::now_ms()) {
+        match guard.step(pool.as_ref(), &cli, wrapper_ready, codex::now_ms()) {
             Step::Sleep(ms) => {
                 guard = shared
                     .wake
@@ -337,7 +362,8 @@ fn run(shared: &'static Shared) {
                             "codex-multi-auth refresh: running check for {due_count} account(s) due, cli sync {}",
                             if sync_cli { "on" } else { "off" }
                         ));
-                        wait_for(shared, child);
+                        wait_for(child);
+                        lock(shared).child_exited();
                     }
                     Err(error) => {
                         diagnose::log_error("codex-multi-auth refresh could not start", error);
@@ -351,25 +377,25 @@ fn run(shared: &'static Shared) {
 }
 
 /// Waits without a timeout and never kills the run: a kill between OpenAI
-/// rotating a refresh token and the wrapper saving it loses the token.
-fn wait_for(shared: &'static Shared, mut child: Child) {
+/// rotating a refresh token and the wrapper saving it loses the token. The
+/// scheduler has nothing else to do while a run is in flight, so it waits here.
+fn wait_for(mut child: Child) {
     let started = Instant::now();
-    let waiter = std::thread::Builder::new()
-        .name("codex-multi-auth-refresh-wait".into())
-        .spawn(move || {
-            let code = child.wait().ok().and_then(|status| status.code());
-            diagnose::log(format!(
-                "codex-multi-auth refresh: check finished exit={code:?} after {} ms",
-                started.elapsed().as_millis()
-            ));
-            lock(shared).child_exited();
-            shared.wake.notify_one();
-        });
-    if let Err(error) = waiter {
-        // The child keeps running on its own; only the bookkeeping is lost.
-        diagnose::log_error("codex-multi-auth refresh could not wait for check", error);
-        lock(shared).child_exited();
-    }
+    let code = child.wait().ok().and_then(|status| status.code());
+    diagnose::log(format!(
+        "codex-multi-auth refresh: check finished exit={code:?} after {} ms",
+        started.elapsed().as_millis()
+    ));
+}
+
+/// True once the wrapper's first-run marker beside the pool is current, so
+/// `check` goes straight to the command instead of installing things first.
+fn wrapper_setup_done(store: &Path) -> bool {
+    std::fs::read(store.with_file_name(WRAPPER_SETUP_MARKER))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|marker| marker.get("version").and_then(serde_json::Value::as_f64))
+        .is_some_and(|version| version >= WRAPPER_SETUP_VERSION)
 }
 
 fn spawn_check(store: &Path, auth_path: Option<&Path>, sync_cli: bool) -> std::io::Result<Child> {
@@ -481,7 +507,14 @@ mod tests {
     }
 
     fn decide_now(store: &Store, cli: &CliAuthState, ids: &[&str]) -> Decision {
-        decide(Some(store), cli, &monitored(ids), &HashMap::new(), NOW)
+        decide(
+            Some(store),
+            cli,
+            true,
+            &monitored(ids),
+            &HashMap::new(),
+            NOW,
+        )
     }
 
     fn trigger(ids: &[(&str, Option<i64>)], sync_cli: bool) -> Decision {
@@ -647,6 +680,7 @@ mod tests {
             decide(
                 Some(&store),
                 &mirror(),
+                true,
                 &monitored(&["org-b"]),
                 &attempts,
                 NOW,
@@ -664,6 +698,49 @@ mod tests {
             attempted(NOW - HOUR, NOW - MINUTE),
             trigger(&[("org-b", Some(NOW + MINUTE))], false)
         );
+    }
+
+    #[test]
+    fn a_pending_wrapper_setup_blocks() {
+        let store = pool(vec![
+            account("org-a", Some(NOW + HOUR)),
+            account("org-b", Some(NOW + MINUTE)),
+        ]);
+        assert_eq!(
+            decide(
+                Some(&store),
+                &mirror(),
+                false,
+                &monitored(&["org-b"]),
+                &HashMap::new(),
+                NOW
+            ),
+            Decision::Blocked(BlockReason::WrapperSetupPending)
+        );
+    }
+
+    #[test]
+    fn the_wrapper_setup_marker_must_be_current() {
+        let directory = std::env::temp_dir().join(format!(
+            "usage-multi-auth-marker-{}-{}",
+            std::process::id(),
+            codex::now_ms()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let store = directory.join(crate::codex_multi_auth::STORE_FILE_NAME);
+        let marker = directory.join(WRAPPER_SETUP_MARKER);
+        assert!(!wrapper_setup_done(&store), "no marker yet");
+        for (content, done) in [
+            (r#"{"version":1}"#, false),
+            (r#"{"version":"2"}"#, false),
+            ("not json", false),
+            (r#"{"version":2,"appBind":"completed"}"#, true),
+            (r#"{"version":3}"#, true),
+        ] {
+            std::fs::write(&marker, content).unwrap();
+            assert_eq!(wrapper_setup_done(&store), done, "{content}");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -719,6 +796,7 @@ mod tests {
             decide(
                 None,
                 &mirror(),
+                true,
                 &monitored(&["org-a"]),
                 &HashMap::new(),
                 NOW
@@ -743,16 +821,16 @@ mod tests {
         let store = pool(vec![account("org-a", Some(NOW + 20 * MINUTE))]);
         let mut scheduler = scheduler(&["org-a"]);
         assert_eq!(
-            scheduler.step(Some(&store), &mirror(), NOW),
+            scheduler.step(Some(&store), &mirror(), true, NOW),
             Step::Sleep(15 * MINUTE)
         );
         let far = pool(vec![account("org-a", Some(NOW + 10 * HOUR))]);
         assert_eq!(
-            scheduler.step(Some(&far), &mirror(), NOW),
+            scheduler.step(Some(&far), &mirror(), true, NOW),
             Step::Sleep(MAX_WAIT_MS)
         );
         assert_eq!(
-            scheduler.step(Some(&store), &mirror(), NOW + 15 * MINUTE),
+            scheduler.step(Some(&store), &mirror(), true, NOW + 15 * MINUTE),
             Step::Spawn {
                 store: PathBuf::from("C:\\pool\\accounts.json"),
                 sync_cli: true,
@@ -769,18 +847,18 @@ mod tests {
         ]);
         let mut scheduler = scheduler(&["org-b"]);
         assert!(matches!(
-            scheduler.step(Some(&store), &mirror(), NOW),
+            scheduler.step(Some(&store), &mirror(), true, NOW),
             Step::Spawn { .. }
         ));
         for later in [NOW, NOW + MINUTE, NOW + HOUR] {
             assert_eq!(
-                scheduler.step(Some(&store), &mirror(), later),
+                scheduler.step(Some(&store), &mirror(), true, later),
                 Step::Sleep(MAX_WAIT_MS)
             );
         }
         scheduler.child_exited();
         assert_eq!(
-            scheduler.step(Some(&store), &mirror(), NOW + MINUTE),
+            scheduler.step(Some(&store), &mirror(), true, NOW + MINUTE),
             Step::Sleep(HOUR - MINUTE),
             "an unchanged expiry waits for the retry backoff"
         );
@@ -789,7 +867,7 @@ mod tests {
             account("org-b", Some(NOW + 20 * MINUTE)),
         ]);
         assert_eq!(
-            scheduler.step(Some(&refreshed), &mirror(), NOW + MINUTE),
+            scheduler.step(Some(&refreshed), &mirror(), true, NOW + MINUTE),
             Step::Sleep(14 * MINUTE),
             "a new expiry is scheduled from its own window"
         );
@@ -803,12 +881,12 @@ mod tests {
         ]);
         let mut scheduler = scheduler(&["org-b"]);
         assert!(matches!(
-            scheduler.step(Some(&store), &mirror(), NOW),
+            scheduler.step(Some(&store), &mirror(), true, NOW),
             Step::Spawn { .. }
         ));
         scheduler.spawn_failed();
         assert_eq!(
-            scheduler.step(Some(&store), &mirror(), NOW + 1_000),
+            scheduler.step(Some(&store), &mirror(), true, NOW + 1_000),
             Step::Sleep(HOUR - 1_000)
         );
     }
@@ -828,7 +906,7 @@ mod tests {
         assert!(bumped(&scheduler));
         scheduler.child_exited();
         assert!(bumped(&scheduler));
-        scheduler.step(None, &mirror(), NOW);
+        scheduler.step(None, &mirror(), true, NOW);
         assert!(!bumped(&scheduler), "the thread's own step does not count");
     }
 
@@ -858,7 +936,7 @@ mod tests {
         let mut scheduler = scheduler(&["org-a"]);
         scheduler.set_monitored(monitored_accounts(false, &accounts), None);
         assert_eq!(
-            scheduler.step(Some(&store), &mirror(), NOW),
+            scheduler.step(Some(&store), &mirror(), true, NOW),
             Step::Sleep(MAX_WAIT_MS)
         );
     }
@@ -872,13 +950,13 @@ mod tests {
         let mut scheduler = scheduler(&["org-b"]);
         for _ in 0..2 {
             assert_eq!(
-                scheduler.step(Some(&store), &CliAuthState::Unreadable, NOW),
+                scheduler.step(Some(&store), &CliAuthState::Unreadable, true, NOW),
                 Step::Sleep(MAX_WAIT_MS)
             );
             assert_eq!(scheduler.last_block, Some(BlockReason::AuthUnreadable));
         }
         assert!(matches!(
-            scheduler.step(Some(&store), &mirror(), NOW),
+            scheduler.step(Some(&store), &mirror(), true, NOW),
             Step::Spawn { .. }
         ));
         assert_eq!(scheduler.last_block, None);
