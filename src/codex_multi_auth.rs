@@ -7,9 +7,11 @@
 //! reads a token straight from the pool at request time. Token refresh stays
 //! with the wrapper, which rotates refresh tokens; a second writer would
 //! invalidate its copy.
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 
 use crate::accounts::{fingerprint, AccountProfile, ProviderAccounts};
 use crate::providers::ProviderId;
@@ -24,6 +26,10 @@ const PROFILE_ID_PREFIX: &str = "codex_ma_";
 pub struct Store {
     pub accounts: Vec<StoreAccount>,
     pub active_index: Option<usize>,
+    /// Per model family active index. The wrapper resolves the "codex" family
+    /// before `activeIndex` when it picks the account to write into auth.json.
+    #[serde(deserialize_with = "lenient_map")]
+    pub active_index_by_family: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -34,12 +40,48 @@ pub struct StoreAccount {
     pub account_label: String,
     /// Read by the poller only; never copied into settings or logs.
     pub access_token: String,
+    /// Compared with auth.json by the refresh scheduler only; never copied
+    /// into settings or logs.
+    #[serde(deserialize_with = "lenient_string")]
+    pub refresh_token: String,
+    /// Unix milliseconds.
+    #[serde(deserialize_with = "lenient_f64")]
+    pub expires_at: Option<f64>,
     pub enabled: Option<bool>,
+}
+
+// Another program writes the pool, and `read_store` hides every account when
+// the file fails to parse, so a field of an unexpected type reads as absent.
+fn lenient_f64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
+    Ok(Value::deserialize(deserializer)?.as_f64())
+}
+
+fn lenient_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(Value::deserialize(deserializer)?
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
+}
+
+fn lenient_map<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Value>, D::Error> {
+    Ok(match Value::deserialize(deserializer)? {
+        Value::Object(map) => map.into_iter().collect(),
+        _ => BTreeMap::new(),
+    })
 }
 
 impl StoreAccount {
     pub fn is_enabled(&self) -> bool {
         self.enabled.unwrap_or(true)
+    }
+
+    /// Expiry in whole milliseconds; None when missing or not finite.
+    pub fn expires_at_ms(&self) -> Option<i64> {
+        self.expires_at
+            .filter(|expires_at| expires_at.is_finite())
+            .map(|expires_at| expires_at as i64)
     }
 
     pub fn display_name(&self) -> String {
@@ -61,6 +103,20 @@ impl Store {
         self.accounts
             .iter()
             .find(|account| account.account_id == account_id)
+    }
+
+    /// The account the wrapper writes into auth.json, resolved the way
+    /// codex-multi-auth 2.15 does it (`resolveActiveIndex(storage, "codex")`):
+    /// the codex family index, else `activeIndex`, else the first account,
+    /// clamped into range.
+    pub fn codex_active(&self) -> Option<&StoreAccount> {
+        let last = self.accounts.len().checked_sub(1)?;
+        let raw = match self.active_index_by_family.get("codex") {
+            None | Some(Value::Null) => self.active_index.map(|index| index as f64),
+            Some(value) => value.as_f64(),
+        };
+        let raw = raw.filter(|raw| raw.is_finite()).unwrap_or(0.0);
+        self.accounts.get((raw.max(0.0) as usize).min(last))
     }
 }
 
@@ -249,6 +305,70 @@ mod tests {
         let back = store(TWO_ACCOUNTS);
         assert!(sync_profiles(&mut accounts, Some(&back)));
         assert_eq!(accounts.selected, profile_id("org-second"));
+    }
+
+    fn active_email(json: &str) -> Option<String> {
+        store(json)
+            .codex_active()
+            .map(|account| account.email.clone())
+    }
+
+    #[test]
+    fn codex_active_mirrors_the_wrapper() {
+        let accounts = r#"[{"accountId":"org-a","email":"a"},{"accountId":"org-b","email":"b"}]"#;
+        let pool = |rest: &str| format!(r#"{{"accounts":{accounts}{rest}}}"#);
+        let expect = |rest: &str, email: &str| {
+            assert_eq!(active_email(&pool(rest)).as_deref(), Some(email), "{rest}");
+        };
+        expect(r#","activeIndex":0,"activeIndexByFamily":{"codex":1}"#, "b");
+        expect(
+            r#","activeIndex":1,"activeIndexByFamily":{"codex":null}"#,
+            "b",
+        );
+        expect(r#","activeIndex":1,"activeIndexByFamily":{"gpt-5":0}"#, "b");
+        expect("", "a");
+        expect(r#","activeIndexByFamily":{"codex":9}"#, "b");
+        expect(
+            r#","activeIndex":1,"activeIndexByFamily":{"codex":"x"}"#,
+            "a",
+        );
+        expect(r#","activeIndexByFamily":{"codex":-2}"#, "a");
+        assert_eq!(active_email(r#"{"accounts":[],"activeIndex":0}"#), None);
+    }
+
+    #[test]
+    fn the_pool_parses_expiry_and_refresh_token() {
+        let pool = store(
+            r#"{"accounts":[
+                {"accountId":"org-a","refreshToken":"ra","expiresAt":1790702650599},
+                {"accountId":"org-b","expiresAt":1.5e12},
+                {"accountId":"org-c"}
+            ]}"#,
+        );
+        assert_eq!(pool.accounts[0].expires_at_ms(), Some(1_790_702_650_599));
+        assert_eq!(pool.accounts[0].refresh_token, "ra");
+        assert_eq!(pool.accounts[1].expires_at_ms(), Some(1_500_000_000_000));
+        assert_eq!(pool.accounts[2].expires_at_ms(), None);
+        assert_eq!(pool.accounts[2].refresh_token, "");
+        assert_eq!(store(TWO_ACCOUNTS).accounts.len(), 2);
+    }
+
+    #[test]
+    fn wrong_typed_fields_do_not_blank_the_pool() {
+        let pool = store(
+            r#"{"accounts":[
+                {"accountId":"org-a","expiresAt":"soon","refreshToken":5},
+                {"accountId":"org-b","expiresAt":null,"refreshToken":null},
+                {"accountId":"org-c","expiresAt":{"at":1},"refreshToken":["r"]}
+            ],"activeIndexByFamily":3}"#,
+        );
+        assert_eq!(pool.accounts.len(), 3);
+        for account in &pool.accounts {
+            assert_eq!(account.expires_at_ms(), None, "{}", account.account_id);
+            assert_eq!(account.refresh_token, "", "{}", account.account_id);
+        }
+        assert!(pool.active_index_by_family.is_empty());
+        assert_eq!(pool.codex_active().unwrap().account_id, "org-a");
     }
 
     #[test]
