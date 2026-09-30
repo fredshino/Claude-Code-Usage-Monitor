@@ -86,6 +86,7 @@ pub struct PollFailure {
 pub fn account_source_signature(provider: ProviderId, path: &std::path::Path) -> String {
     match provider {
         ProviderId::Claude => claude::account_watch_signature(path),
+        ProviderId::Codex => codex::account_watch_signature(path),
         _ => crate::accounts::file_signature(path),
     }
 }
@@ -97,6 +98,13 @@ pub fn poll(
     force: bool,
     on_progress: impl FnMut(AppUsageData),
 ) -> Result<AppUsageData, PollFailure> {
+    // Every poll, whichever path it takes, so turning Codex off stops refreshes.
+    multi_auth_refresh::schedule(
+        enabled_providers
+            .iter()
+            .any(|provider| provider == ProviderId::Codex),
+        &settings.codex,
+    );
     if enabled_providers
         .iter()
         .any(|provider| settings.get(provider).is_some())
@@ -282,6 +290,7 @@ mod codex;
 mod copilot;
 mod cursor;
 mod grok;
+mod multi_auth_refresh;
 mod opencode;
 mod retry_after;
 mod windows_credentials;
