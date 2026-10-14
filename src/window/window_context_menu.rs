@@ -212,6 +212,11 @@ pub(super) fn account_menu_entries(
 
 pub(super) fn select_account(hwnd: HWND, provider: ProviderId, account: &str) {
     let follow = account == crate::codex_multi_auth::FOLLOW_ACTIVE;
+    // Following exists only for the codex-multi-auth pool; a custom menu row that asks for
+    // it on another provider must not mirror the Codex pool into that provider's profiles.
+    if follow && provider != ProviderId::Codex {
+        return;
+    }
     let pool = if follow {
         crate::codex_multi_auth::load_store()
     } else {

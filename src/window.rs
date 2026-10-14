@@ -2269,6 +2269,60 @@ fn poll_worker(send_hwnd: SendHwnd) {
     }
 }
 
+/// Signature of the default `.claude.json` the last time it was confirmed to hold no email
+/// while the default profile was waiting to be renamed, so an unchanged file is not parsed
+/// again on every poll.
+static CLAUDE_DEFAULT_EMAIL_MISS: Mutex<Option<String>> = Mutex::new(None);
+
+/// Claude Code profiles (`~/.claude-<name>`) appear and disappear with their logins. Returns
+/// true when the settings changed and should be saved. A scan that could not run changes
+/// nothing.
+fn sync_claude_profiles() -> bool {
+    let Some(found) = crate::claude_profiles::discover() else {
+        return false;
+    };
+    let default_credentials = crate::accounts::default_credential_path(ProviderId::Claude);
+    let config_json = crate::claude_profiles::default_config_json();
+    let signature = config_json.as_deref().map(crate::accounts::file_signature);
+    let mut miss = CLAUDE_DEFAULT_EMAIL_MISS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let config_json = config_json.filter(|_| miss.is_none() || *miss != signature);
+    let mut state = lock_state();
+    let Some(state) = state.as_mut() else {
+        return false;
+    };
+    let source = crate::claude_profiles::DefaultSource {
+        credentials: default_credentials.as_deref(),
+        config_json: config_json.as_deref(),
+    };
+    let changed =
+        crate::claude_profiles::sync_profiles(&mut state.accounts.claude, &found, &source);
+    // The rename is still pending, so the file held no usable email. Remember that only when
+    // the file confirms it has none; an unreadable file (perhaps mid-write) is retried.
+    if let Some(path) = config_json.as_deref() {
+        if crate::claude_profiles::default_awaits_email(&state.accounts.claude)
+            && crate::claude_profiles::email_lookup(path)
+                == crate::claude_profiles::EmailLookup::Absent
+        {
+            *miss = signature;
+        }
+    }
+    if changed {
+        diagnose::log_lazy(|| {
+            format!(
+                "claude profiles synced found={} profiles={}",
+                found.len(),
+                state.accounts.claude.profiles.len()
+            )
+        });
+        if let Some(data) = state.data.as_mut() {
+            data.select_accounts(&state.accounts);
+        }
+    }
+    changed
+}
+
 fn do_poll_once(hwnd: HWND) {
     let poll_started = Instant::now();
     // codex-multi-auth can add, remove or switch accounts at any time.
@@ -2287,6 +2341,9 @@ fn do_poll_once(hwnd: HWND) {
         })
     };
     if pool_changed {
+        save_state_settings();
+    }
+    if sync_claude_profiles() {
         save_state_settings();
     }
     let (enabled_providers, accounts, previous, force) = {
