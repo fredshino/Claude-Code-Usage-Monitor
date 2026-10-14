@@ -2269,8 +2269,9 @@ fn poll_worker(send_hwnd: SendHwnd) {
     }
 }
 
-/// Signature of the default `.claude.json` the last time it held no email while the default
-/// profile was waiting to be renamed, so an unchanged file is not parsed again on every poll.
+/// Signature of the default `.claude.json` the last time it was confirmed to hold no email
+/// while the default profile was waiting to be renamed, so an unchanged file is not parsed
+/// again on every poll.
 static CLAUDE_DEFAULT_EMAIL_MISS: Mutex<Option<String>> = Mutex::new(None);
 
 /// Claude Code profiles (`~/.claude-<name>`) appear and disappear with their logins. Returns
@@ -2297,9 +2298,15 @@ fn sync_claude_profiles() -> bool {
     };
     let changed =
         crate::claude_profiles::sync_profiles(&mut state.accounts.claude, &found, &source);
-    if config_json.is_some() && crate::claude_profiles::default_awaits_email(&state.accounts.claude)
-    {
-        *miss = signature;
+    // The rename is still pending, so the file held no usable email. Remember that only when
+    // the file confirms it has none; an unreadable file (perhaps mid-write) is retried.
+    if let Some(path) = config_json.as_deref() {
+        if crate::claude_profiles::default_awaits_email(&state.accounts.claude)
+            && crate::claude_profiles::email_lookup(path)
+                == crate::claude_profiles::EmailLookup::Absent
+        {
+            *miss = signature;
+        }
     }
     if changed {
         diagnose::log_lazy(|| {

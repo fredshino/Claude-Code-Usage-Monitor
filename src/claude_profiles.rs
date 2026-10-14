@@ -77,17 +77,50 @@ pub fn profile_id(dir_name: &str) -> String {
     )
 }
 
+/// What a Claude Code `.claude.json` says about its account's email.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmailLookup {
+    /// `oauthAccount.emailAddress`, trimmed and non-empty.
+    Found(String),
+    /// A confirmed absence: the file does not exist, or it parsed and carries no email.
+    Absent,
+    /// The file exists but could not be read or parsed, perhaps because it is mid-write.
+    Unreadable,
+}
+
+impl EmailLookup {
+    pub fn found(self) -> Option<String> {
+        match self {
+            Self::Found(email) => Some(email),
+            Self::Absent | Self::Unreadable => None,
+        }
+    }
+}
+
+pub fn email_lookup(config_json: &Path) -> EmailLookup {
+    let content = match std::fs::read_to_string(config_json) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return EmailLookup::Absent,
+        Err(_) => return EmailLookup::Unreadable,
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&content) else {
+        return EmailLookup::Unreadable;
+    };
+    match value
+        .get("oauthAccount")
+        .and_then(|account| account.get("emailAddress"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
+        Some(email) if !email.is_empty() => EmailLookup::Found(email.to_string()),
+        _ => EmailLookup::Absent,
+    }
+}
+
 /// `oauthAccount.emailAddress` from a Claude Code `.claude.json`, trimmed; None when the file
 /// is missing, unreadable, not JSON, or carries no email.
 pub fn email_in(config_json: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(config_json).ok()?;
-    let value: Value = serde_json::from_str(&content).ok()?;
-    let email = value
-        .get("oauthAccount")?
-        .get("emailAddress")?
-        .as_str()?
-        .trim();
-    (!email.is_empty()).then(|| email.to_string())
+    email_lookup(config_json).found()
 }
 
 /// The `.claude.json` that belongs to the default profile: inside `CLAUDE_CONFIG_DIR` when it
@@ -287,6 +320,36 @@ mod tests {
         std::fs::write(&file, "x").unwrap();
         assert!(discover_in(&file).is_none());
         assert_eq!(discover_in(&home.0), Some(Vec::new()));
+    }
+
+    #[test]
+    fn email_lookup_tells_a_confirmed_absence_from_an_unreadable_file() {
+        let home = TempHome::new("lookup");
+        let path = home.0.join(CONFIG_FILE_NAME);
+        write_config(&path, " first@example.com ");
+        assert_eq!(
+            email_lookup(&path),
+            EmailLookup::Found("first@example.com".into())
+        );
+        assert_eq!(email_in(&path).as_deref(), Some("first@example.com"));
+        for absent in [
+            r#"{"numStartups": 3}"#,
+            r#"{"oauthAccount": {"emailAddress": "  "}}"#,
+            r#"{"oauthAccount": {"emailAddress": 5}}"#,
+            r#"{"oauthAccount": null}"#,
+        ] {
+            std::fs::write(&path, absent).unwrap();
+            assert_eq!(email_lookup(&path), EmailLookup::Absent, "{absent}");
+        }
+        assert_eq!(
+            email_lookup(&home.0.join("missing.json")),
+            EmailLookup::Absent
+        );
+        std::fs::write(&path, r#"{"oauthAccount": {"emailAddress": "first@exa"#).unwrap();
+        assert_eq!(email_lookup(&path), EmailLookup::Unreadable);
+        assert_eq!(email_in(&path), None);
+        // A folder where the file should be cannot be read.
+        assert_eq!(email_lookup(&home.0), EmailLookup::Unreadable);
     }
 
     #[test]
