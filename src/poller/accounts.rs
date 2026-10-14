@@ -179,11 +179,7 @@ where
                     format!(
                         "{} account {} polling source={:?} paused={paused_error:?}",
                         target.provider.descriptor().display_name,
-                        target
-                            .profile
-                            .as_ref()
-                            .map(|profile| profile.name.as_str())
-                            .unwrap_or("default"),
+                        log_label(target),
                         target.path
                     )
                 });
@@ -227,11 +223,7 @@ where
                 format!(
                     "{} account {} usage received: session={} weekly={} stale={}",
                     target.provider.descriptor().display_name,
-                    target
-                        .profile
-                        .as_ref()
-                        .map(|profile| profile.name.as_str())
-                        .unwrap_or("default"),
+                    log_label(&target),
                     usage.session.percentage,
                     usage.weekly.percentage,
                     usage.stale
@@ -243,11 +235,7 @@ where
                 format!(
                     "{} account {} usage poll failed: {error:?}",
                     target.provider.descriptor().display_name,
-                    target
-                        .profile
-                        .as_ref()
-                        .map(|profile| profile.name.as_str())
-                        .unwrap_or("default")
+                    log_label(&target)
                 )
             });
             first_error.get_or_insert(PollFailure {
@@ -295,6 +283,16 @@ fn pool_account(target: &Target) -> &str {
         .as_ref()
         .map(|profile| profile.multi_auth_account.as_str())
         .unwrap_or("")
+}
+
+/// How diagnose lines name an account: its profile id, never its display name, which is
+/// often an email address.
+fn log_label(target: &Target) -> &str {
+    target
+        .profile
+        .as_ref()
+        .map(|profile| profile.id.as_str())
+        .unwrap_or("default")
 }
 
 fn source_key(path: &Result<Option<PathBuf>, String>) -> String {
@@ -879,5 +877,24 @@ mod tests {
         assert!(cached.accounts[0].usage.is_none());
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn diagnose_lines_name_accounts_by_id_not_email() {
+        let named = Target {
+            provider: ProviderId::Claude,
+            profile: Some(AccountProfile {
+                id: "claude_cd_0123abcd".into(),
+                name: "second@example.com".into(),
+                ..Default::default()
+            }),
+            path: Ok(None),
+        };
+        assert_eq!(log_label(&named), "claude_cd_0123abcd");
+        let bare = Target {
+            profile: None,
+            ..named
+        };
+        assert_eq!(log_label(&bare), "default");
     }
 }

@@ -57,6 +57,9 @@ pub struct AccountProfile {
     /// codex-multi-auth account id when this profile comes from its pool;
     /// empty for profiles that read a credentials file.
     pub multi_auth_account: String,
+    /// Added by Claude Code profile discovery (`~/.claude-<name>`); removed again when the folder
+    /// loses its login. False for profiles added by hand.
+    pub auto_discovered: bool,
     pub enabled: bool,
 }
 
@@ -68,6 +71,7 @@ impl Default for AccountProfile {
             config_dir: String::new(),
             credentials_path: String::new(),
             multi_auth_account: String::new(),
+            auto_discovered: false,
             enabled: true,
         }
     }
