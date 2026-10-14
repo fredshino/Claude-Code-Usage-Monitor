@@ -96,6 +96,12 @@ If the Codex CLI is managed by [codex-multi-auth](https://www.npmjs.com/package/
 
 Right-click the widget and open **Codex account** to choose which account the widget shows. **Follow the Codex CLI** keeps it on whatever account you last switched to with `codex-multi-auth switch`; picking an account by name pins it. The same choice is available as **Default account** in the dashboard. Custom themes can show every account at once through the `accounts.codex.<id>` bindings, and custom context menus can use `select_account(codex, "<id>")` or `select_account(codex, *)`.
 
+### Several Claude Code accounts
+
+Claude Code keeps each account in its own config folder, chosen with `CLAUDE_CONFIG_DIR`. Every `~/.claude-<name>` folder that holds a login (a `.credentials.json`) is listed under **Accounts** in the dashboard, named by the email in that folder's `.claude.json`, and is removed again when the folder loses its login. Once a second account appears, the default profile takes its own email as its name, unless you have already renamed it.
+
+Right-click the widget and open **Claude Code account** to choose which account the widget shows; picking an account pins it. Custom themes can show every account at once through the `accounts.claude.<id>` bindings. Nothing is written to the profile folders by the monitor: when a token expires, it has Claude Code refresh it (`claude -p .` under that folder's `CLAUDE_CONFIG_DIR`), so Claude Code stays the only writer of its credentials.
+
 ## Data and privacy
 
 The monitor reads local sign-in credentials for enabled providers and sends usage requests directly to their official services. It has no backend service, collects no telemetry, and does not upload credentials or project files.
