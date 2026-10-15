@@ -157,6 +157,8 @@ impl ProviderAccounts {
                     .id
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                // Themes address accounts by position as accounts.<provider>.<n>.
+                || profile.id.bytes().all(|b| b.is_ascii_digit())
                 || !seen.insert(profile.id.to_ascii_lowercase())
             {
                 let (id, _) = self.allocate_id();
@@ -310,6 +312,18 @@ mod tests {
             .profiles
             .iter()
             .any(|old| old.id.eq_ignore_ascii_case(&accounts.profiles[0].id)));
+    }
+
+    #[test]
+    fn all_digit_ids_are_replaced_because_themes_use_them_as_positions() {
+        let mut accounts: ProviderAccounts = serde_json::from_str(
+            r#"{"profiles": [{"id":"2","name":"Second"}, {"id":"x2","name":"Kept"}], "selected":"2"}"#,
+        )
+        .unwrap();
+        accounts.normalize();
+        assert!(!accounts.profiles[0].id.bytes().all(|b| b.is_ascii_digit()));
+        assert_eq!(accounts.profiles[1].id, "x2");
+        assert_eq!(accounts.selected().unwrap().name, "Second");
     }
 
     #[test]

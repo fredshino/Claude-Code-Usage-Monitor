@@ -100,7 +100,9 @@ Right-click the widget and open **Codex account** to choose which account the wi
 
 Claude Code keeps each account in its own config folder, chosen with `CLAUDE_CONFIG_DIR`. Every `~/.claude-<name>` folder that holds a login (a `.credentials.json`) is listed under **Accounts** in the dashboard, named by the email in that folder's `.claude.json`, and is removed again when the folder loses its login. Once a second account appears, the default profile takes its own email as its name, unless you have already renamed it.
 
-Right-click the widget and open **Claude Code account** to choose which account the widget shows; picking an account pins it. Custom themes can show every account at once through the `accounts.claude.<id>` bindings. Nothing is written to the profile folders by the monitor: when a token expires, it has Claude Code refresh it (`claude -p .` under that folder's `CLAUDE_CONFIG_DIR`), so Claude Code stays the only writer of its credentials.
+With two or more accounts monitored, the Classic widget shows them side by side, up to three, in the order the dashboard lists them. Each account gets its own card with its 5-hour, 7-day and Fable meters, labelled with a short form of its name: the email's domain (`gmail`, `hotmail`) when that tells the accounts apart, otherwise the part before the @. Rename an account in the dashboard to choose its label, or clear **Monitor** to leave it out. Right-click the widget and open **Claude Code account** to choose the account the tray icon and single-account themes show; picking an account pins it.
+
+Custom themes can address each account by id (`accounts.claude.<id>`) or by position (`accounts.claude.1`, `accounts.claude.2`, …, next to `accounts.claude.count`), and every account has a `.label`. Nothing is written to the profile folders by the monitor: when a token expires, it has Claude Code refresh it (`claude -p .` under that folder's `CLAUDE_CONFIG_DIR`), so Claude Code stays the only writer of its credentials.
 
 ## Data and privacy
 

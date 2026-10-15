@@ -1571,26 +1571,8 @@ impl DataContext {
             "antigravity.crossfade_opacity",
             runtime.crossfade_opacity.clamp(0.0, 1.0),
         );
+        context.insert_accounts(data, runtime);
         if let Some(data) = data {
-            for account in &data.accounts {
-                let key = format!(
-                    "accounts.{}.{}",
-                    account.provider.descriptor().key,
-                    account.profile.id
-                );
-                context.insert_string(&format!("{key}.name"), &account.profile.name);
-                context.insert(&format!("{key}.selected"), account.selected as u8 as f64);
-                context.insert(
-                    &format!("{key}.has_error"),
-                    account.error.is_some() as u8 as f64,
-                );
-                context.insert_provider(
-                    &key,
-                    account.usage.as_ref(),
-                    account.provider == ProviderId::Codex,
-                    runtime.countdown,
-                );
-            }
             for descriptor in PROVIDER_DESCRIPTORS {
                 if let Some(account) = data
                     .accounts
@@ -1945,6 +1927,7 @@ impl DataContext {
             let mut context = Self::default();
             context.insert_provider("account", None, false, false);
             context.insert_string("account.name", "");
+            context.insert_string("account.label", "");
             context.insert("account.selected", 0.0);
             context.insert("account.has_error", 0.0);
             context
@@ -2920,6 +2903,7 @@ pub use theme_rendering::*;
 mod theme_expression;
 pub use theme_expression::*;
 
+mod theme_accounts;
 mod theme_datetime;
 mod theme_limits;
 use theme_datetime::*;

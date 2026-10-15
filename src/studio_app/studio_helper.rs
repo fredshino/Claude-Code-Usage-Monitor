@@ -551,6 +551,7 @@ const OWNER_FIELDS: &[(&str, &str)] = &[
     (".has_error", "Has an error"),
     (".selected", "Selected account"),
     (".name", "Account name"),
+    (".label", "Short account label"),
     (".account.name", "Account name"),
     (".limits.count", "Reported limit count"),
 ];
@@ -747,11 +748,14 @@ pub(super) fn value_entries(
             .get_string(&format!("{prefix}.name"))
             .filter(|name| !name.is_empty())
             .unwrap_or(id);
-        owners.push((
-            prefix.to_string(),
-            descriptor.key,
-            format!("{} · {name}", language.text(descriptor.display_name)),
-        ));
+        // Numeric ids are positions (`accounts.claude.1`), listed next to the
+        // ids they currently point at.
+        let title = if id.bytes().all(|byte| byte.is_ascii_digit()) {
+            format!("{} #{id} · {name}", language.text(descriptor.display_name))
+        } else {
+            format!("{} · {name}", language.text(descriptor.display_name))
+        };
+        owners.push((prefix.to_string(), descriptor.key, title));
     }
 
     let limit_bases: Vec<&str> = context
