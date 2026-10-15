@@ -244,6 +244,17 @@ impl AppUsageData {
                     .any(|profile| profile.enabled && *profile == account.profile)
             })
         });
+        // Progress updates re-append each account as its poll finishes, and
+        // themes address accounts by position, so restore the settings order.
+        self.accounts.sort_by_cached_key(|account| {
+            let position = settings.get(account.provider).and_then(|configured| {
+                configured
+                    .profiles
+                    .iter()
+                    .position(|profile| *profile == account.profile)
+            });
+            (account.provider, position)
+        });
     }
 
     pub fn selected_account_name(&self, provider: ProviderId) -> Option<&str> {
@@ -463,5 +474,42 @@ mod tests {
         );
         assert!(decoded.get(ProviderId::Antigravity).is_none());
         assert!(decoded.get(ProviderId::OpenCode).is_none());
+    }
+
+    #[test]
+    fn accounts_keep_settings_order_whichever_poll_finishes_first() {
+        use crate::accounts::{AccountProfile, AccountSettings, ProviderAccounts};
+        let profile = |id: &str| AccountProfile {
+            id: id.into(),
+            name: id.into(),
+            ..Default::default()
+        };
+        let settings = AccountSettings {
+            claude: ProviderAccounts {
+                profiles: vec![profile("first"), profile("second")],
+                selected: "first".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut data = AppUsageData::default();
+        for id in ["second", "first"] {
+            data.accounts.push(AccountUsage {
+                provider: ProviderId::Claude,
+                profile: profile(id),
+                source_signature: String::new(),
+                source_path: None,
+                usage: Some(UsageData::default()),
+                error: None,
+                selected: false,
+            });
+        }
+        data.select_accounts(&settings);
+        let ids: Vec<&str> = data
+            .accounts
+            .iter()
+            .map(|account| account.profile.id.as_str())
+            .collect();
+        assert_eq!(ids, ["first", "second"]);
     }
 }
