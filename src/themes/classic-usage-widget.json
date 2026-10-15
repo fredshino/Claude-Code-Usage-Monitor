@@ -19,7 +19,7 @@
         "offset_x": 0,
         "offset_y": 0
       },
-      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28 + providers.claude.enabled * claude.model.fable.available * 93",
+      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28 + providers.claude.enabled * (accounts.claude.count < 2) * claude.model.fable.available * 93 + (providers.claude.enabled && accounts.claude.count >= 2) * (4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.1.model.fable.available * 93 + 4 + 9 + 3) + (providers.claude.enabled && accounts.claude.count >= 2) * (4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.2.model.fable.available * 93 + 4 + 9 + 3) + (providers.claude.enabled && accounts.claude.count >= 3) * (4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.3.model.fable.available * 93 + 4 + 9 + 3) - (providers.claude.enabled && accounts.claude.count >= 2) * ((ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3)",
       "height": "46",
       "mouse_events": {
         "right_click": "show_context_menu(\"classic-v1\")"
@@ -423,7 +423,7 @@
         {
           "id": "claude-provider",
           "name": "Claude Code provider",
-          "render": "providers.claude.enabled",
+          "render": "providers.claude.enabled && accounts.claude.count < 2",
           "parent": "provider-row",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62",
           "height": "46"
@@ -613,6 +613,1440 @@
             "align": "left",
             "color": {
               "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1",
+          "name": "Claude Code account 1",
+          "render": "(providers.claude.enabled && accounts.claude.count >= 2)",
+          "parent": "provider-row",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.1.model.fable.available * 93 + 4 + 9",
+          "height": "46"
+        },
+        {
+          "id": "claude-account-1-card-dark",
+          "name": "dark Claude Code account 1 card",
+          "render": "system.dark",
+          "parent": "claude-account-1",
+          "x": "0",
+          "y": "1",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.1.model.fable.available * 93 + 4",
+          "height": "44",
+          "corner_radius": "6",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFF0F"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-label-dark",
+          "name": "dark Claude Code account 1 label",
+          "render": "system.dark",
+          "parent": "claude-account-1",
+          "x": "4",
+          "y": "13",
+          "height": "20",
+          "width": "60",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.1.label}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "semibold",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#E6E6E6FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-session-segments-dark",
+          "name": "dark Claude Code account 1 session segments",
+          "render": "system.dark",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-session-value-dark",
+          "name": "dark Claude Code account 1 session value",
+          "render": "system.dark",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.1.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F09A7AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-weekly-segments-dark",
+          "name": "dark Claude Code account 1 weekly segments",
+          "render": "system.dark",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-weekly-value-dark",
+          "name": "dark Claude Code account 1 weekly value",
+          "render": "system.dark && !accounts.claude.1.credits.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.1.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F09A7AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-credits-segments-dark",
+          "name": "dark Claude Code account 1 credit segments",
+          "render": "system.dark && accounts.claude.1.credits.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-credits-value-dark",
+          "name": "dark Claude Code account 1 credit balance",
+          "render": "system.dark && accounts.claude.1.credits.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${accounts.claude.1.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-fable-segments-dark",
+          "name": "dark Claude Code account 1 Fable segments",
+          "render": "system.dark && accounts.claude.1.model.fable.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-fable-value-dark",
+          "name": "dark Claude Code account 1 Fable value",
+          "render": "system.dark && accounts.claude.1.model.fable.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {accounts.claude.1.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#B5A8E0FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-card-light",
+          "name": "light Claude Code account 1 card",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-1",
+          "x": "0",
+          "y": "1",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.1.model.fable.available * 93 + 4",
+          "height": "44",
+          "corner_radius": "6",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#0000000D"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-label-light",
+          "name": "light Claude Code account 1 label",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-1",
+          "x": "4",
+          "y": "13",
+          "height": "20",
+          "width": "60",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.1.label}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "semibold",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#1F1F1FFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-session-segments-light",
+          "name": "light Claude Code account 1 session segments",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-session-value-light",
+          "name": "light Claude Code account 1 session value",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.1.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-weekly-segments-light",
+          "name": "light Claude Code account 1 weekly segments",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-weekly-value-light",
+          "name": "light Claude Code account 1 weekly value",
+          "render": "(1 - system.dark) && !accounts.claude.1.credits.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.1.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-credits-segments-light",
+          "name": "light Claude Code account 1 credit segments",
+          "render": "(1 - system.dark) && accounts.claude.1.credits.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-credits-value-light",
+          "name": "light Claude Code account 1 credit balance",
+          "render": "(1 - system.dark) && accounts.claude.1.credits.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${accounts.claude.1.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-account-1-fable-segments-light",
+          "name": "light Claude Code account 1 Fable segments",
+          "render": "(1 - system.dark) && accounts.claude.1.model.fable.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.1.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-1-fable-value-light",
+          "name": "light Claude Code account 1 Fable value",
+          "render": "(1 - system.dark) && accounts.claude.1.model.fable.available",
+          "parent": "claude-account-1",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {accounts.claude.1.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5B4B8AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2",
+          "name": "Claude Code account 2",
+          "render": "(providers.claude.enabled && accounts.claude.count >= 2)",
+          "parent": "provider-row",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.2.model.fable.available * 93 + 4 + 9",
+          "height": "46"
+        },
+        {
+          "id": "claude-account-2-card-dark",
+          "name": "dark Claude Code account 2 card",
+          "render": "system.dark",
+          "parent": "claude-account-2",
+          "x": "0",
+          "y": "1",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.2.model.fable.available * 93 + 4",
+          "height": "44",
+          "corner_radius": "6",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFF0F"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-label-dark",
+          "name": "dark Claude Code account 2 label",
+          "render": "system.dark",
+          "parent": "claude-account-2",
+          "x": "4",
+          "y": "13",
+          "height": "20",
+          "width": "60",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.2.label}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "semibold",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#E6E6E6FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-session-segments-dark",
+          "name": "dark Claude Code account 2 session segments",
+          "render": "system.dark",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-session-value-dark",
+          "name": "dark Claude Code account 2 session value",
+          "render": "system.dark",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.2.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F09A7AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-weekly-segments-dark",
+          "name": "dark Claude Code account 2 weekly segments",
+          "render": "system.dark",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-weekly-value-dark",
+          "name": "dark Claude Code account 2 weekly value",
+          "render": "system.dark && !accounts.claude.2.credits.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.2.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F09A7AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-credits-segments-dark",
+          "name": "dark Claude Code account 2 credit segments",
+          "render": "system.dark && accounts.claude.2.credits.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-credits-value-dark",
+          "name": "dark Claude Code account 2 credit balance",
+          "render": "system.dark && accounts.claude.2.credits.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${accounts.claude.2.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-fable-segments-dark",
+          "name": "dark Claude Code account 2 Fable segments",
+          "render": "system.dark && accounts.claude.2.model.fable.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-fable-value-dark",
+          "name": "dark Claude Code account 2 Fable value",
+          "render": "system.dark && accounts.claude.2.model.fable.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {accounts.claude.2.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#B5A8E0FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-card-light",
+          "name": "light Claude Code account 2 card",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-2",
+          "x": "0",
+          "y": "1",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.2.model.fable.available * 93 + 4",
+          "height": "44",
+          "corner_radius": "6",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#0000000D"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-label-light",
+          "name": "light Claude Code account 2 label",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-2",
+          "x": "4",
+          "y": "13",
+          "height": "20",
+          "width": "60",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.2.label}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "semibold",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#1F1F1FFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-session-segments-light",
+          "name": "light Claude Code account 2 session segments",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-session-value-light",
+          "name": "light Claude Code account 2 session value",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.2.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-weekly-segments-light",
+          "name": "light Claude Code account 2 weekly segments",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-weekly-value-light",
+          "name": "light Claude Code account 2 weekly value",
+          "render": "(1 - system.dark) && !accounts.claude.2.credits.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.2.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-credits-segments-light",
+          "name": "light Claude Code account 2 credit segments",
+          "render": "(1 - system.dark) && accounts.claude.2.credits.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-credits-value-light",
+          "name": "light Claude Code account 2 credit balance",
+          "render": "(1 - system.dark) && accounts.claude.2.credits.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${accounts.claude.2.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-account-2-fable-segments-light",
+          "name": "light Claude Code account 2 Fable segments",
+          "render": "(1 - system.dark) && accounts.claude.2.model.fable.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.2.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-2-fable-value-light",
+          "name": "light Claude Code account 2 Fable value",
+          "render": "(1 - system.dark) && accounts.claude.2.model.fable.available",
+          "parent": "claude-account-2",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {accounts.claude.2.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5B4B8AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3",
+          "name": "Claude Code account 3",
+          "render": "(providers.claude.enabled && accounts.claude.count >= 3)",
+          "parent": "provider-row",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.3.model.fable.available * 93 + 4 + 9",
+          "height": "46"
+        },
+        {
+          "id": "claude-account-3-card-dark",
+          "name": "dark Claude Code account 3 card",
+          "render": "system.dark",
+          "parent": "claude-account-3",
+          "x": "0",
+          "y": "1",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.3.model.fable.available * 93 + 4",
+          "height": "44",
+          "corner_radius": "6",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFF0F"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-label-dark",
+          "name": "dark Claude Code account 3 label",
+          "render": "system.dark",
+          "parent": "claude-account-3",
+          "x": "4",
+          "y": "13",
+          "height": "20",
+          "width": "60",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.3.label}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "semibold",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#E6E6E6FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-session-segments-dark",
+          "name": "dark Claude Code account 3 session segments",
+          "render": "system.dark",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-session-value-dark",
+          "name": "dark Claude Code account 3 session value",
+          "render": "system.dark",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.3.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F09A7AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-weekly-segments-dark",
+          "name": "dark Claude Code account 3 weekly segments",
+          "render": "system.dark",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-weekly-value-dark",
+          "name": "dark Claude Code account 3 weekly value",
+          "render": "system.dark && !accounts.claude.3.credits.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.3.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F09A7AFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-credits-segments-dark",
+          "name": "dark Claude Code account 3 credit segments",
+          "render": "system.dark && accounts.claude.3.credits.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-credits-value-dark",
+          "name": "dark Claude Code account 3 credit balance",
+          "render": "system.dark && accounts.claude.3.credits.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${accounts.claude.3.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-fable-segments-dark",
+          "name": "dark Claude Code account 3 Fable segments",
+          "render": "system.dark && accounts.claude.3.model.fable.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-fable-value-dark",
+          "name": "dark Claude Code account 3 Fable value",
+          "render": "system.dark && accounts.claude.3.model.fable.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {accounts.claude.3.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#B5A8E0FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-card-light",
+          "name": "light Claude Code account 3 card",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-3",
+          "x": "0",
+          "y": "1",
+          "width": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + accounts.claude.3.model.fable.available * 93 + 4",
+          "height": "44",
+          "corner_radius": "6",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#0000000D"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-label-light",
+          "name": "light Claude Code account 3 label",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-3",
+          "x": "4",
+          "y": "13",
+          "height": "20",
+          "width": "60",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.3.label}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "semibold",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#1F1F1FFF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-session-segments-light",
+          "name": "light Claude Code account 3 session segments",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-session-value-light",
+          "name": "light Claude Code account 3 session value",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.3.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-weekly-segments-light",
+          "name": "light Claude Code account 3 weekly segments",
+          "render": "(1 - system.dark)",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-weekly-value-light",
+          "name": "light Claude Code account 3 weekly value",
+          "render": "(1 - system.dark) && !accounts.claude.3.credits.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{accounts.claude.3.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A94F32FF"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-credits-segments-light",
+          "name": "light Claude Code account 3 credit segments",
+          "render": "(1 - system.dark) && accounts.claude.3.credits.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-credits-value-light",
+          "name": "light Claude Code account 3 credit balance",
+          "render": "(1 - system.dark) && accounts.claude.3.credits.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${accounts.claude.3.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-account-3-fable-segments-light",
+          "name": "light Claude Code account 3 Fable segments",
+          "render": "(1 - system.dark) && accounts.claude.3.model.fable.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "accounts.claude.3.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-account-3-fable-value-light",
+          "name": "light Claude Code account 3 Fable value",
+          "render": "(1 - system.dark) && accounts.claude.3.model.fable.available",
+          "parent": "claude-account-3",
+          "x": "4 + 60 + 4 + (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + 3",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {accounts.claude.3.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5B4B8AFF"
             }
           }
         },
@@ -1711,7 +3145,7 @@
         {
           "id": "fable-provider",
           "name": "Fable weekly meter",
-          "render": "providers.claude.enabled && claude.model.fable.available",
+          "render": "providers.claude.enabled && accounts.claude.count < 2 && claude.model.fable.available",
           "parent": "provider-row",
           "width": "90",
           "height": "46"

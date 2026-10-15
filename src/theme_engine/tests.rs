@@ -865,9 +865,13 @@ fn horizontal_fable_columns_follow_claude_visibility_and_usage_direction() {
                 if object.parent.as_deref() != Some("provider-row") {
                     continue;
                 }
-                let (x, y, w, h) =
+                // Per-account Claude columns render only with two or more accounts.
+                let Some((x, y, w, h)) =
                     resolve_object_bounds_with_runtime(&theme, 0, index, Some(&usage), runtime)
-                        .unwrap();
+                else {
+                    assert!(object.id.starts_with("claude-account-"), "{}", object.id);
+                    continue;
+                };
                 assert!(x >= 0.0 && x + w <= width as f64, "{}", object.id);
                 assert!(y >= 0.0 && y + h <= height as f64, "{}", object.id);
             }
@@ -881,14 +885,33 @@ fn horizontal_fable_columns_follow_claude_visibility_and_usage_direction() {
 fn starter_theme_round_trips_and_validates() {
     let theme = ThemeDocument::starter();
     assert!(theme.validate().is_empty());
+    let account_layer = |object: &&SceneObject| {
+        object
+            .parent
+            .as_deref()
+            .is_some_and(|parent| parent.starts_with("claude-account-"))
+    };
     let segments = theme.surfaces[0]
         .children
         .iter()
+        .filter(|object| !account_layer(object))
         .filter_map(|object| match object.content {
             SceneContent::Progress { segments, .. } => Some(segments),
             _ => None,
         })
         .collect::<Vec<_>>();
+    // Each of the three per-account Claude cards repeats the 5-hour, 7-day,
+    // credit and Fable layers in both modes.
+    let account_segments = theme.surfaces[0]
+        .children
+        .iter()
+        .filter(account_layer)
+        .filter_map(|object| match object.content {
+            SceneContent::Progress { segments, .. } => Some(segments),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(account_segments, [10, 10, 10, 8].repeat(3 * 2));
     // Classic contains separate light and dark progress layers so the
     // 1.4.9 palette follows the taskbar mode without runtime recolouring:
     // five providers over two windows in two modes, plus Grok and Copilot,
