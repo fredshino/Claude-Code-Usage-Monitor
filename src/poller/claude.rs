@@ -91,7 +91,7 @@ pub(super) fn poll_claude_code() -> Result<UsageData, PollError> {
 
     let creds = refresh_credentials(creds)?;
 
-    fetch_usage_with_fallback(&creds.access_token)
+    fetch_usage_refreshing_on_auth_error(&creds)
 }
 
 /// Explicit profiles are pinned to one source, including when refresh fails.
@@ -119,7 +119,43 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
             return Err(PollError::TokenExpired);
         }
     }
-    fetch_usage_with_fallback(&credentials.access_token)
+    fetch_usage_refreshing_on_auth_error(&credentials)
+}
+
+/// A token the CLI still records as valid can still come back 401: on
+/// 2026-10-23 the usage endpoint rejected one a minute or more before its
+/// `expiresAt`, with the local clock within a second of the server's. Left
+/// alone, that auth error pauses the account until its credentials file
+/// changes, which for an idle profile is the next time the CLI runs in it.
+/// The CLI's own answer to a 401 is to refresh and retry, so do the same
+/// once, and only when the refresh produced a different, unexpired token: a
+/// dead login must not hit the API twice, and it stays paused as before.
+fn fetch_usage_refreshing_on_auth_error(credentials: &Credentials) -> Result<UsageData, PollError> {
+    retry_auth_error_with_refresh(credentials, fetch_usage_with_fallback, |source| {
+        cli_refresh_token(source);
+        read_credentials_from_source(source)
+    })
+}
+
+fn retry_auth_error_with_refresh(
+    credentials: &Credentials,
+    fetch: impl Fn(&str) -> Result<UsageData, PollError>,
+    refresh: impl FnOnce(&CredentialSource) -> Option<Credentials>,
+) -> Result<UsageData, PollError> {
+    let result = fetch(&credentials.access_token);
+    if !matches!(result, Err(PollError::HttpStatus(401 | 403))) {
+        return result;
+    }
+    match refresh(&credentials.source) {
+        Some(refreshed)
+            if refreshed.access_token != credentials.access_token
+                && !is_token_expired(refreshed.expires_at) =>
+        {
+            diagnose::log("retrying the Claude usage request with the refreshed token");
+            fetch(&refreshed.access_token)
+        }
+        _ => result,
+    }
 }
 
 /// The desktop app's token, but only for a profile that points at the default
@@ -1103,6 +1139,80 @@ mod tests {
         assert_eq!(poll_account(&path), Err(PollError::TokenExpired));
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn auth_error_retries_once_with_a_refreshed_token() {
+        use std::cell::RefCell;
+        let source = CredentialSource::Windows(PathBuf::from("C:/profile/.credentials.json"));
+        let credentials = |token: &str, expires_at: i64| Credentials {
+            access_token: token.into(),
+            expires_at: Some(expires_at),
+            source: source.clone(),
+        };
+        let far_future = i64::MAX / 2;
+        let fetched = RefCell::new(Vec::new());
+        let fetch = |token: &str| {
+            fetched.borrow_mut().push(token.to_string());
+            if token == "fresh" {
+                Ok(UsageData::default())
+            } else {
+                Err(PollError::HttpStatus(401))
+            }
+        };
+        let refreshed_from = RefCell::new(Vec::new());
+        let refresh = |outcome: Option<Credentials>| {
+            let refreshed_from = &refreshed_from;
+            move |source: &CredentialSource| {
+                refreshed_from.borrow_mut().push(source.clone());
+                outcome
+            }
+        };
+
+        // The refresh wrote a new token: use it, and only once.
+        let stale = credentials("stale", far_future);
+        assert!(retry_auth_error_with_refresh(
+            &stale,
+            fetch,
+            refresh(Some(credentials("fresh", far_future)))
+        )
+        .is_ok());
+        assert_eq!(fetched.borrow().as_slice(), ["stale", "fresh"]);
+        assert_eq!(refreshed_from.borrow().as_slice(), [source.clone()]);
+
+        // An unchanged token means the login is dead: report the original
+        // error without a second request.
+        fetched.borrow_mut().clear();
+        assert_eq!(
+            retry_auth_error_with_refresh(
+                &stale,
+                fetch,
+                refresh(Some(credentials("stale", far_future)))
+            ),
+            Err(PollError::HttpStatus(401))
+        );
+        assert_eq!(fetched.borrow().as_slice(), ["stale"]);
+
+        // So does a refresh that left no readable token, or an expired one.
+        fetched.borrow_mut().clear();
+        assert_eq!(
+            retry_auth_error_with_refresh(&stale, fetch, refresh(None)),
+            Err(PollError::HttpStatus(401))
+        );
+        assert_eq!(
+            retry_auth_error_with_refresh(&stale, fetch, refresh(Some(credentials("fresh", 0)))),
+            Err(PollError::HttpStatus(401))
+        );
+        assert_eq!(fetched.borrow().as_slice(), ["stale", "stale"]);
+
+        // Anything but an auth error never starts a refresh.
+        refreshed_from.borrow_mut().clear();
+        let throttled = |_: &str| Err(PollError::HttpStatus(429));
+        assert_eq!(
+            retry_auth_error_with_refresh(&stale, throttled, refresh(None)),
+            Err(PollError::HttpStatus(429))
+        );
+        assert!(refreshed_from.borrow().is_empty());
     }
 
     #[test]
