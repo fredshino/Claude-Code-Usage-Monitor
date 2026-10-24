@@ -1178,7 +1178,10 @@ mod tests {
         )
         .is_ok());
         assert_eq!(fetched.borrow().as_slice(), ["stale", "fresh"]);
-        assert_eq!(refreshed_from.borrow().as_slice(), [source.clone()]);
+        assert_eq!(
+            refreshed_from.borrow().as_slice(),
+            std::slice::from_ref(&source)
+        );
 
         // An unchanged token means the login is dead: report the original
         // error without a second request.
