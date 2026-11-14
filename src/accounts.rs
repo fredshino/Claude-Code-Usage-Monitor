@@ -107,6 +107,28 @@ impl ProviderAccounts {
             .or_else(|| self.profiles.iter().find(|profile| profile.enabled))
     }
 
+    /// True when `id` is the only monitored account. It stays on: a provider with no
+    /// account left to show is switched off as a whole instead.
+    pub fn is_only_enabled(&self, id: &str) -> bool {
+        let mut enabled = self.profiles.iter().filter(|profile| profile.enabled);
+        enabled.next().is_some_and(|profile| profile.id == id) && enabled.next().is_none()
+    }
+
+    /// Start or stop monitoring one account, which also shows or hides it in the widget.
+    /// Hiding the selected account moves the selection to the first one still monitored.
+    /// Returns true when the settings changed.
+    pub fn toggle_enabled(&mut self, id: &str) -> bool {
+        if self.is_only_enabled(id) {
+            return false;
+        }
+        let Some(profile) = self.profiles.iter_mut().find(|profile| profile.id == id) else {
+            return false;
+        };
+        profile.enabled = !profile.enabled;
+        self.normalize();
+        true
+    }
+
     pub fn add(&mut self) {
         self.normalize();
         let (id, number) = self.allocate_id();
@@ -377,5 +399,31 @@ mod tests {
         accounts.profiles.clear();
         accounts.normalize();
         assert!(accounts.selected().is_none());
+    }
+
+    #[test]
+    fn toggling_hides_and_shows_an_account_but_never_the_last_one() {
+        let mut accounts = ProviderAccounts::default();
+        accounts.add();
+        accounts.profiles[1].enabled = true;
+        assert!(!accounts.is_only_enabled("default"));
+
+        // Hiding the selected account hands the selection to the one still shown.
+        assert!(accounts.toggle_enabled("default"));
+        assert!(!accounts.profiles[0].enabled);
+        assert_eq!(accounts.selected, "account_1");
+
+        // The last monitored account stays on.
+        assert!(accounts.is_only_enabled("account_1"));
+        assert!(!accounts.toggle_enabled("account_1"));
+        assert!(accounts.profiles[1].enabled);
+
+        // Showing an account again leaves the selection where it is.
+        assert!(accounts.toggle_enabled("default"));
+        assert!(accounts.profiles[0].enabled);
+        assert_eq!(accounts.selected, "account_1");
+        assert!(!accounts.is_only_enabled("account_1"));
+
+        assert!(!accounts.toggle_enabled("missing"));
     }
 }

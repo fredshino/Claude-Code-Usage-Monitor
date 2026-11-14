@@ -126,19 +126,15 @@ unsafe fn append_context_menu_items(
                     continue;
                 };
                 for entry in entries {
-                    let Some((label, action, checked)) = entry else {
+                    let Some(row) = entry else {
                         let _ = AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null());
                         continue;
                     };
                     let id = 1_000 + actions.len();
-                    let label = native_interop::wide_str(&label);
-                    let flags = if checked {
-                        MF_CHECKED
-                    } else {
-                        MENU_ITEM_FLAGS(0)
-                    };
+                    let label = native_interop::wide_str(&row.label);
+                    let flags = menu_row_flags(row.checked, row.locked);
                     let _ = AppendMenuW(submenu, flags, id, PCWSTR::from_raw(label.as_ptr()));
-                    actions.push(action);
+                    actions.push(row.action);
                 }
                 let label = native_interop::wide_str(&context_menu::rendered_label(
                     language,
@@ -167,10 +163,21 @@ unsafe fn append_context_menu_items(
     }
 }
 
+/// One clickable row of a provider's account submenu.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AccountMenuRow {
+    label: String,
+    action: ContextMenuAction,
+    checked: bool,
+    /// Drawn greyed out: clicking it would change nothing.
+    locked: bool,
+}
+
 /// Rows for one provider's account submenu; `None` is a separator. A pool
 /// managed by codex-multi-auth adds a "follow the CLI" row ahead of the
-/// accounts themselves.
-type AccountMenuEntry = Option<(String, ContextMenuAction, bool)>;
+/// accounts themselves. With more than one account configured, a second
+/// group shows or hides each of them.
+type AccountMenuEntry = Option<AccountMenuRow>;
 
 pub(super) fn account_menu_entries(
     provider: ProviderId,
@@ -183,31 +190,99 @@ pub(super) fn account_menu_entries(
     else {
         return Vec::new();
     };
+    account_menu_rows(provider, accounts, language)
+}
+
+fn account_menu_rows(
+    provider: ProviderId,
+    accounts: &crate::accounts::ProviderAccounts,
+    language: LanguageId,
+) -> Vec<AccountMenuEntry> {
     let pooled = crate::codex_multi_auth::has_pool_profiles(accounts);
     let following = pooled && accounts.follow_multi_auth;
     let mut entries = Vec::new();
     if pooled {
-        entries.push(Some((
-            language.text("Follow the Codex CLI").to_string(),
-            ContextMenuAction::SelectAccount {
+        entries.push(Some(AccountMenuRow {
+            label: language.text("Follow the Codex CLI").to_string(),
+            action: ContextMenuAction::SelectAccount {
                 provider,
                 account: crate::codex_multi_auth::FOLLOW_ACTIVE.into(),
             },
-            following,
-        )));
+            checked: following,
+            locked: false,
+        }));
         entries.push(None);
     }
-    for profile in accounts.profiles.iter().filter(|profile| profile.enabled) {
-        entries.push(Some((
-            profile.name.clone(),
-            ContextMenuAction::SelectAccount {
-                provider,
-                account: profile.id.clone(),
-            },
-            !following && accounts.selected == profile.id,
-        )));
+    let shown = accounts.profiles.iter().filter(|profile| profile.enabled);
+    // A single shown account leaves nothing to choose between, unless picking
+    // it is how the widget stops following the CLI.
+    if pooled || shown.clone().count() > 1 {
+        entries.extend(shown.map(|profile| {
+            Some(AccountMenuRow {
+                label: profile.name.clone(),
+                action: ContextMenuAction::SelectAccount {
+                    provider,
+                    account: profile.id.clone(),
+                },
+                checked: !following && accounts.selected == profile.id,
+                locked: false,
+            })
+        }));
+    }
+    // The pool's own accounts replace the default profile, which reads the
+    // same login as the active one; offering it here would only invite a duplicate.
+    let hideable: Vec<_> = accounts
+        .profiles
+        .iter()
+        .filter(|profile| !pooled || profile.is_multi_auth() || profile.enabled)
+        .collect();
+    if hideable.len() > 1 {
+        if !entries.is_empty() {
+            entries.push(None);
+        }
+        entries.extend(hideable.into_iter().map(|profile| {
+            Some(AccountMenuRow {
+                label: language
+                    .text("Show {account}")
+                    .replace("{account}", &profile.name),
+                action: ContextMenuAction::ToggleAccount {
+                    provider,
+                    account: profile.id.clone(),
+                },
+                checked: profile.enabled,
+                locked: accounts.is_only_enabled(&profile.id),
+            })
+        }));
     }
     entries
+}
+
+/// Show or hide one account from the context menu. Hiding stops its polling
+/// too, so an account without an active subscription no longer shows an error.
+pub(super) fn toggle_account(hwnd: HWND, provider: ProviderId, account: &str) {
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        let accounts = match provider {
+            ProviderId::Claude => &mut state.accounts.claude,
+            ProviderId::Codex => &mut state.accounts.codex,
+            _ => return,
+        };
+        if !accounts.toggle_enabled(account) {
+            return;
+        }
+        if let Some(data) = state.data.as_mut() {
+            data.select_accounts(&state.accounts);
+        }
+    }
+    save_state_settings();
+    position_at_taskbar();
+    render_layered();
+    sync_tray_icon(hwnd);
+    // A newly shown account has no reading until it is polled.
+    request_poll(hwnd);
 }
 
 pub(super) fn select_account(hwnd: HWND, provider: ProviderId, account: &str) {
@@ -331,17 +406,35 @@ pub(super) fn context_menu_action_flags(
                 }
             })
         }
+        ContextMenuAction::ToggleAccount { provider, account } => {
+            state.accounts.get(*provider).is_some_and(|accounts| {
+                accounts
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.enabled && profile.id == *account)
+            })
+        }
         _ => false,
     };
-    let disabled = matches!(
-        action,
-        ContextMenuAction::CheckForUpdates
-            if matches!(state.update_status, UpdateStatus::Checking | UpdateStatus::Applying)
-    ) || matches!(
-        action,
-        ContextMenuAction::LayerActions { .. } | ContextMenuAction::ToggleLayerRender { .. }
-    ) && origin.is_none()
-        && state.active_theme.is_none();
+    let disabled = matches!(action, ContextMenuAction::ToggleAccount { provider, account }
+        if state
+            .accounts
+            .get(*provider)
+            .is_some_and(|accounts| accounts.is_only_enabled(account)))
+        || matches!(
+            action,
+            ContextMenuAction::CheckForUpdates
+                if matches!(state.update_status, UpdateStatus::Checking | UpdateStatus::Applying)
+        )
+        || matches!(
+            action,
+            ContextMenuAction::LayerActions { .. } | ContextMenuAction::ToggleLayerRender { .. }
+        ) && origin.is_none()
+            && state.active_theme.is_none();
+    menu_row_flags(checked, disabled)
+}
+
+fn menu_row_flags(checked: bool, disabled: bool) -> MENU_ITEM_FLAGS {
     match (checked, disabled) {
         (true, true) => MF_CHECKED | MF_GRAYED,
         (true, false) => MF_CHECKED,
@@ -453,7 +546,8 @@ pub(super) fn execute_context_menu_action(
         | ContextMenuAction::ToggleLayerRender { .. }
         | ContextMenuAction::LayerActions { .. }
         | ContextMenuAction::OpenUrl { .. }
-        | ContextMenuAction::SelectAccount { .. } => None,
+        | ContextMenuAction::SelectAccount { .. }
+        | ContextMenuAction::ToggleAccount { .. } => None,
     };
     if let Some(command) = static_command {
         unsafe {
@@ -496,6 +590,9 @@ pub(super) fn execute_context_menu_action(
         }
         ContextMenuAction::SelectAccount { provider, account } => {
             select_account(hwnd, provider, &account)
+        }
+        ContextMenuAction::ToggleAccount { provider, account } => {
+            toggle_account(hwnd, provider, &account)
         }
         _ => {}
     }
@@ -646,6 +743,100 @@ mod tests {
         assert_eq!(
             toggle_layer_render_state(&theme, 0, &layer_id, None, runtime),
             Some(true)
+        );
+    }
+
+    /// `(label, checked, locked)` per row, `None` for a separator.
+    fn rows(
+        provider: ProviderId,
+        accounts: &crate::accounts::ProviderAccounts,
+    ) -> Vec<Option<(String, bool, bool)>> {
+        account_menu_rows(provider, accounts, LanguageId::English)
+            .into_iter()
+            .map(|row| row.map(|row| (row.label, row.checked, row.locked)))
+            .collect()
+    }
+
+    fn row(label: &str, checked: bool, locked: bool) -> Option<(String, bool, bool)> {
+        Some((label.into(), checked, locked))
+    }
+
+    #[test]
+    fn claude_account_menu_shows_and_hides_each_account_but_never_the_last() {
+        use crate::accounts::{AccountProfile, ProviderAccounts};
+        let profile = |id: &str, name: &str| AccountProfile {
+            id: id.into(),
+            name: name.into(),
+            ..Default::default()
+        };
+        let mut accounts = ProviderAccounts {
+            profiles: vec![
+                profile("default", "fred@gmail.com"),
+                profile("claude_cd_a", "fred@hotmail.com"),
+            ],
+            selected: "default".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            rows(ProviderId::Claude, &accounts),
+            [
+                row("fred@gmail.com", true, false),
+                row("fred@hotmail.com", false, false),
+                None,
+                row("Show fred@gmail.com", true, false),
+                row("Show fred@hotmail.com", true, false),
+            ]
+        );
+
+        // With one account hidden there is nothing to choose between, but the
+        // hidden account can still be brought back, and the other stays on.
+        assert!(accounts.toggle_enabled("claude_cd_a"));
+        assert_eq!(
+            rows(ProviderId::Claude, &accounts),
+            [
+                row("Show fred@gmail.com", true, true),
+                row("Show fred@hotmail.com", false, false),
+            ]
+        );
+
+        // A single configured account gets no submenu at all.
+        accounts.profiles.truncate(1);
+        assert!(rows(ProviderId::Claude, &accounts).is_empty());
+    }
+
+    #[test]
+    fn codex_pool_menu_leaves_the_switched_off_default_profile_out() {
+        use crate::accounts::{AccountProfile, ProviderAccounts};
+        let pool = |account: &str| AccountProfile {
+            id: crate::codex_multi_auth::profile_id(account),
+            name: format!("{account}@example.com"),
+            multi_auth_account: account.into(),
+            ..Default::default()
+        };
+        let accounts = ProviderAccounts {
+            profiles: vec![
+                AccountProfile {
+                    enabled: false,
+                    ..Default::default()
+                },
+                pool("first"),
+                pool("second"),
+            ],
+            selected: crate::codex_multi_auth::profile_id("second"),
+            follow_multi_auth: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            rows(ProviderId::Codex, &accounts),
+            [
+                row("Follow the Codex CLI", true, false),
+                None,
+                row("first@example.com", false, false),
+                row("second@example.com", false, false),
+                None,
+                row("Show first@example.com", true, false),
+                row("Show second@example.com", true, false),
+            ]
         );
     }
 }

@@ -344,6 +344,11 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
             provider.descriptor().key,
             string_arg(account)
         ),
+        ContextMenuAction::ToggleAccount { provider, account } => format!(
+            "toggle_account({}, {})",
+            provider.descriptor().key,
+            string_arg(account)
+        ),
         ContextMenuAction::Exit => "exit()".into(),
     }
 }
@@ -439,20 +444,29 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
         }
         return Ok(ContextMenuAction::OpenUrl { url });
     }
-    if let Some(value) = call_arg("select_account") {
+    for name in ["select_account", "toggle_account"] {
+        let Some(value) = call_arg(name) else {
+            continue;
+        };
         let (provider, account) = value
             .split_once(',')
-            .ok_or_else(|| "Expected select_account(provider, account)".to_string())?;
+            .ok_or_else(|| format!("Expected {name}(provider, account)"))?;
         let key = provider.trim().trim_matches('"').to_ascii_lowercase();
         let provider = ContextMenuProvider::from_key(&key)
             .ok_or_else(|| format!("Unknown provider: {key}"))?;
         let account = account.trim();
         let account: String = if account.starts_with('"') {
             serde_json::from_str(account)
-                .map_err(|_| "select_account needs a valid quoted account id".to_string())?
+                .map_err(|_| format!("{name} needs a valid quoted account id"))?
         } else {
             account.to_string()
         };
+        if name == "toggle_account" {
+            if account.is_empty() {
+                return Err("toggle_account needs an account id".into());
+            }
+            return Ok(ContextMenuAction::ToggleAccount { provider, account });
+        }
         if account.is_empty() {
             return Err("select_account needs an account id, or * to follow the Codex CLI".into());
         }
