@@ -97,6 +97,12 @@ pub enum ContextMenuAction {
         provider: ContextMenuProvider,
         account: String,
     },
+    /// Show or hide one named account: a hidden account is neither polled nor
+    /// drawn. The last monitored account of a provider cannot be hidden.
+    ToggleAccount {
+        provider: ContextMenuProvider,
+        account: String,
+    },
     Exit,
 }
 
