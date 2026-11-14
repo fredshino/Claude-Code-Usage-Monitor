@@ -668,7 +668,7 @@
         {
           "id": "claude-account-1-session-segments-dark",
           "name": "dark Claude Code account 1 session segments",
-          "render": "system.dark",
+          "render": "(system.dark) && accounts.claude.1.session.available",
           "parent": "claude-account-1",
           "x": "4 + 60 + 4",
           "y": "5",
@@ -693,7 +693,7 @@
         {
           "id": "claude-account-1-session-value-dark",
           "name": "dark Claude Code account 1 session value",
-          "render": "system.dark",
+          "render": "(system.dark) && accounts.claude.1.session.available",
           "parent": "claude-account-1",
           "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -903,7 +903,7 @@
         {
           "id": "claude-account-1-session-segments-light",
           "name": "light Claude Code account 1 session segments",
-          "render": "(1 - system.dark)",
+          "render": "(1 - system.dark) && accounts.claude.1.session.available",
           "parent": "claude-account-1",
           "x": "4 + 60 + 4",
           "y": "5",
@@ -928,7 +928,7 @@
         {
           "id": "claude-account-1-session-value-light",
           "name": "light Claude Code account 1 session value",
-          "render": "(1 - system.dark)",
+          "render": "(1 - system.dark) && accounts.claude.1.session.available",
           "parent": "claude-account-1",
           "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -1146,7 +1146,7 @@
         {
           "id": "claude-account-2-session-segments-dark",
           "name": "dark Claude Code account 2 session segments",
-          "render": "system.dark",
+          "render": "(system.dark) && accounts.claude.2.session.available",
           "parent": "claude-account-2",
           "x": "4 + 60 + 4",
           "y": "5",
@@ -1171,7 +1171,7 @@
         {
           "id": "claude-account-2-session-value-dark",
           "name": "dark Claude Code account 2 session value",
-          "render": "system.dark",
+          "render": "(system.dark) && accounts.claude.2.session.available",
           "parent": "claude-account-2",
           "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -1381,7 +1381,7 @@
         {
           "id": "claude-account-2-session-segments-light",
           "name": "light Claude Code account 2 session segments",
-          "render": "(1 - system.dark)",
+          "render": "(1 - system.dark) && accounts.claude.2.session.available",
           "parent": "claude-account-2",
           "x": "4 + 60 + 4",
           "y": "5",
@@ -1406,7 +1406,7 @@
         {
           "id": "claude-account-2-session-value-light",
           "name": "light Claude Code account 2 session value",
-          "render": "(1 - system.dark)",
+          "render": "(1 - system.dark) && accounts.claude.2.session.available",
           "parent": "claude-account-2",
           "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -1624,7 +1624,7 @@
         {
           "id": "claude-account-3-session-segments-dark",
           "name": "dark Claude Code account 3 session segments",
-          "render": "system.dark",
+          "render": "(system.dark) && accounts.claude.3.session.available",
           "parent": "claude-account-3",
           "x": "4 + 60 + 4",
           "y": "5",
@@ -1649,7 +1649,7 @@
         {
           "id": "claude-account-3-session-value-dark",
           "name": "dark Claude Code account 3 session value",
-          "render": "system.dark",
+          "render": "(system.dark) && accounts.claude.3.session.available",
           "parent": "claude-account-3",
           "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -1859,7 +1859,7 @@
         {
           "id": "claude-account-3-session-segments-light",
           "name": "light Claude Code account 3 session segments",
-          "render": "(1 - system.dark)",
+          "render": "(1 - system.dark) && accounts.claude.3.session.available",
           "parent": "claude-account-3",
           "x": "4 + 60 + 4",
           "y": "5",
@@ -1884,7 +1884,7 @@
         {
           "id": "claude-account-3-session-value-light",
           "name": "light Claude Code account 3 session value",
-          "render": "(1 - system.dark)",
+          "render": "(1 - system.dark) && accounts.claude.3.session.available",
           "parent": "claude-account-3",
           "x": "4 + 60 + 4 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",

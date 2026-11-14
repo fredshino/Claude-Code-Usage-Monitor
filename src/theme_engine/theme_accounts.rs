@@ -372,6 +372,34 @@ mod tests {
         );
     }
 
+    /// Upstream hides the 5-hour row of an account that reports no 5-hour
+    /// window (issue #204); the cards follow, one account at a time.
+    #[test]
+    fn a_card_hides_the_five_hour_row_its_account_does_not_report() {
+        let theme = ThemeDocument::starter();
+        let mut weekly_only = usage(0.0, 26.0, None);
+        weekly_only.session.available = false;
+        let data = data(&[
+            ("default", "fred@gmail.com", Some(usage(11.0, 33.0, None))),
+            ("claude_cd_a", "fred@hotmail.com", Some(weekly_only)),
+        ]);
+        let mut context = context(Some(&data), ThemeRuntime::new(true, true, false));
+        for dark in [false, true] {
+            context.insert("system.dark", dark as u8 as f64);
+            let shown = |prefix: &str| {
+                theme.surfaces[0]
+                    .children
+                    .iter()
+                    .filter(|object| object.id.starts_with(prefix))
+                    .filter(|object| evaluate(&object.render.0, &context).unwrap() != 0.0)
+                    .count()
+            };
+            assert_eq!(shown("claude-account-1-session-"), 2);
+            assert_eq!(shown("claude-account-2-session-"), 0);
+            assert_eq!(shown("claude-account-2-weekly-"), 2);
+        }
+    }
+
     #[test]
     fn email_names_shorten_to_the_part_that_tells_them_apart() {
         assert_eq!(
